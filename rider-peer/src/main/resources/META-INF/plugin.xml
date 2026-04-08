@@ -1,0 +1,23 @@
+<idea-plugin>
+    <id>com.editorpeerbridge.rider</id>
+    <name>Editor Peer Bridge</name>
+    <vendor email="local@example.com">Local</vendor>
+    <description><![CDATA[Peer-to-peer jump bridge for Rider, VSCode and Cursor.]]></description>
+
+    <depends>com.intellij.modules.rider</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <projectService serviceImplementation="com.editorpeerbridge.PeerBridgeService"/>
+        <postStartupActivity implementation="com.editorpeerbridge.PeerStartupActivity"/>
+        <notificationGroup id="Editor Peer Bridge" displayType="BALLOON" isLogByDefault="true"/>
+    </extensions>
+
+    <actions>
+        <action id="EditorPeerBridge.JumpToPeer"
+                class="com.editorpeerbridge.JumpToPeerAction"
+                text="Editor Peer Bridge: Jump To Peer"
+                description="Send current file and selection to a matching peer instance">
+            <keyboard-shortcut first-keystroke="ctrl alt shift J" keymap="$default"/>
+        </action>
+    </actions>
+</idea-plugin>

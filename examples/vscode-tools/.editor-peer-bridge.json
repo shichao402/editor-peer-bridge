@@ -1,0 +1,61 @@
+{
+  "peers": {
+    "rider-main-01": {
+      "peerId": "rider-main-01",
+      "editorKind": "rider",
+      "instanceName": "Rider Main",
+      "port": 47631,
+      "workspaceRoots": [
+        "D:/workspace/game-client"
+      ],
+      "supportedProjectTypes": [
+        "gamecore"
+      ],
+      "projectType": "gamecore"
+    },
+    "cursor-main-01": {
+      "peerId": "cursor-main-01",
+      "editorKind": "cursor",
+      "instanceName": "Cursor Main",
+      "port": 47632,
+      "workspaceRoots": [
+        "D:/workspace/game-client"
+      ],
+      "supportedProjectTypes": [
+        "all"
+      ],
+      "projectType": "gamecore"
+    },
+    "vscode-tools-01": {
+      "peerId": "vscode-tools-01",
+      "editorKind": "vscode",
+      "instanceName": "VSCode Tools",
+      "port": 47633,
+      "workspaceRoots": [
+        "D:/workspace/tools"
+      ],
+      "supportedProjectTypes": [
+        "tools"
+      ],
+      "projectType": "tools"
+    }
+  },
+  "typeHierarchy": {
+    "all": [
+      "gamecore",
+      "tools",
+      "editor"
+    ],
+    "gamecore": [],
+    "tools": [],
+    "editor": []
+  },
+  "routing": {
+    "defaultTargetPeerIds": {
+      "rider": "cursor-main-01",
+      "cursor": "rider-main-01",
+      "vscode": "cursor-main-01"
+    },
+    "requestTimeoutMs": 3000
+  }
+}

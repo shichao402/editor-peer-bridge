@@ -1,0 +1,35 @@
+{
+  "name": "editor-peer-bridge-vscode-peer",
+  "displayName": "Editor Peer Bridge",
+  "description": "Peer-to-peer jump bridge for VSCode and Cursor.",
+  "version": "0.0.1",
+  "publisher": "local",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:editorPeerBridge.jumpToPeer"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "editorPeerBridge.jumpToPeer",
+        "title": "Editor Peer Bridge: Jump To Peer"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.16.11",
+    "@types/vscode": "^1.95.0",
+    "typescript": "^5.6.3"
+  }
+}

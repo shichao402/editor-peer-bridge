@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://editorpeerbridge.local/schemas/editor-peer-config.schema.json",
+  "title": "Editor Peer Bridge Config",
+  "type": "object",
+  "required": ["peers", "typeHierarchy"],
+  "properties": {
+    "peers": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "$ref": "#/$defs/peerEntry"
+      }
+    },
+    "typeHierarchy": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "routing": {
+      "type": "object",
+      "properties": {
+        "defaultTargetPeerIds": {
+          "type": "object",
+          "properties": {
+            "rider": { "type": "string" },
+            "vscode": { "type": "string" },
+            "cursor": { "type": "string" },
+            "codebuddy": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "requestTimeoutMs": {
+          "type": "integer",
+          "minimum": 100,
+          "default": 3000
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "peerEntry": {
+      "type": "object",
+      "required": [
+        "peerId",
+        "editorKind",
+        "instanceName",
+        "port",
+        "workspaceRoots",
+        "supportedProjectTypes",
+        "projectType"
+      ],
+      "properties": {
+        "peerId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "editorKind": {
+          "type": "string",
+          "enum": ["rider", "vscode", "cursor", "codebuddy"]
+        },
+        "instanceName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "workspaceRoots": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "supportedProjectTypes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "projectType": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,16 @@
+# Tools
+.tools/
+
+# VSCode peer
+vscode-peer/node_modules/
+vscode-peer/dist/
+vscode-peer/*.vsix
+
+# Rider peer
+rider-peer/build/
+rider-peer/.gradle/
+rider-peer/.idea/
+
+# OS
+.DS_Store
+Thumbs.db

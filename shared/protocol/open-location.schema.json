@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://editorpeerbridge.local/schemas/open-location.schema.json",
+  "title": "Editor Peer Open Location",
+  "type": "object",
+  "required": ["source", "document", "options"],
+  "properties": {
+    "source": {
+      "$ref": "#/$defs/sourceContext"
+    },
+    "targetHint": {
+      "$ref": "#/$defs/targetHint"
+    },
+    "document": {
+      "$ref": "#/$defs/documentRef"
+    },
+    "options": {
+      "$ref": "#/$defs/openOptions"
+    }
+  },
+  "$defs": {
+    "position": {
+      "type": "object",
+      "required": ["line", "column"],
+      "properties": {
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "column": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "range": {
+      "type": "object",
+      "required": ["start", "end"],
+      "properties": {
+        "start": {
+          "$ref": "#/$defs/position"
+        },
+        "end": {
+          "$ref": "#/$defs/position"
+        }
+      },
+      "additionalProperties": false
+    },
+    "sourceContext": {
+      "type": "object",
+      "required": [
+        "peerId",
+        "editorKind",
+        "instanceName",
+        "projectRoot",
+        "projectType"
+      ],
+      "properties": {
+        "peerId": {
+          "type": "string"
+        },
+        "editorKind": {
+          "type": "string",
+          "enum": ["rider", "vscode", "cursor"]
+        },
+        "instanceName": {
+          "type": "string"
+        },
+        "projectRoot": {
+          "type": "string"
+        },
+        "projectType": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "targetHint": {
+      "type": "object",
+      "properties": {
+        "peerIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "editorKinds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["rider", "vscode", "cursor"]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "documentRef": {
+      "type": "object",
+      "required": ["filePath", "selection"],
+      "properties": {
+        "filePath": {
+          "type": "string"
+        },
+        "selection": {
+          "$ref": "#/$defs/range"
+        }
+      },
+      "additionalProperties": false
+    },
+    "openOptions": {
+      "type": "object",
+      "required": ["activateWindow", "revealMode"],
+      "properties": {
+        "activateWindow": {
+          "type": "boolean"
+        },
+        "revealMode": {
+          "type": "string",
+          "enum": ["default", "center"]
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
