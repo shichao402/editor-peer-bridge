@@ -3,7 +3,24 @@
   "displayName": "Editor Peer Bridge",
   "description": "Peer-to-peer jump bridge for VSCode and Cursor.",
   "version": "0.0.1",
-  "publisher": "local",
+  "publisher": "shichao402",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/shichao402/editor-peer-bridge"
+  },
+  "bugs": {
+    "url": "https://github.com/shichao402/editor-peer-bridge/issues"
+  },
+  "homepage": "https://github.com/shichao402/editor-peer-bridge#readme",
+  "keywords": [
+    "jump",
+    "navigation",
+    "editor-bridge",
+    "rider",
+    "cursor",
+    "codebuddy"
+  ],
   "engines": {
     "vscode": "^1.95.0"
   },
