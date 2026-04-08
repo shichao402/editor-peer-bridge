@@ -46,4 +46,8 @@ tasks {
         sourceCompatibility = "17"
         targetCompatibility = "17"
     }
+
+    publishPlugin {
+        token.set(System.getenv("JETBRAINS_PUBLISH_TOKEN"))
+    }
 }
