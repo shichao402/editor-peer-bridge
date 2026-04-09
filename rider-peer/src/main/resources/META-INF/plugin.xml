@@ -1,5 +1,5 @@
 <idea-plugin>
-    <id>com.editorpeerbridge.rider</id>
+    <id>com.editorpeerbridge.bridge</id>
     <name>Editor Peer Bridge</name>
     <vendor email="shichao402@gmail.com" url="https://github.com/shichao402/editor-peer-bridge">shichao402</vendor>
     <description><![CDATA[Cross-editor code navigation tool. Jump between Rider, VSCode, Cursor, and CodeBuddy with a single keystroke.]]></description>
