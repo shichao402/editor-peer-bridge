@@ -35,6 +35,10 @@ class PeerBridgeService(private val project: Project) : Disposable {
     private val httpClient: HttpClient = HttpClient.newBuilder().build()
     private var server: HttpServer? = null
     private var activePort: Int? = null
+    private var cachedConfig: BridgeConfig? = null
+    private var configCacheTime: Long = 0
+    private val CONFIG_CACHE_TTL_MS = 5000L  // 5 second cache
+    private val MAX_REQUEST_BODY_SIZE = 1 * 1024 * 1024L  // 1 MB max
 
     fun startServer() {
         ensureConfig()
@@ -270,6 +274,7 @@ class PeerBridgeService(private val project: Project) : Disposable {
 
     private fun postOpenLocation(target: PeerEntry, request: OpenLocationRequest, timeoutMs: Long): ErrorOrSuccess {
         val requestId = UUID.randomUUID().toString()
+        val requestBody = mapper.writeValueAsString(request)
         val httpRequest = HttpRequest.newBuilder()
             .uri(URI.create("http://127.0.0.1:${target.port}/peer/v1/open-location"))
             .timeout(Duration.ofMillis(timeoutMs))
@@ -278,7 +283,7 @@ class PeerBridgeService(private val project: Project) : Disposable {
             .header("X-Editor-Peer-Protocol-Version", "1")
             .header("X-Editor-Peer-Request-Id", requestId)
             .header("X-Editor-Peer-Source", request.source.peerId)
-            .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(request)))
+            .POST(HttpRequest.BodyPublishers.ofString(requestBody))
             .build()
 
         return try {
@@ -305,9 +310,16 @@ class PeerBridgeService(private val project: Project) : Disposable {
 
     private fun handleExchange(exchange: HttpExchange, handler: (String, String) -> Any) {
         val requestId = exchange.requestHeaders.getFirst("X-Editor-Peer-Request-Id") ?: UUID.randomUUID().toString()
-        val body = exchange.requestBody.readAllBytes().toString(StandardCharsets.UTF_8)
 
         try {
+            // Check Content-Length before reading
+            val contentLength = exchange.requestHeaders.getFirst("Content-Length")?.toLongOrNull()
+            if (contentLength != null && contentLength > MAX_REQUEST_BODY_SIZE) {
+                respondJson(exchange, 413, error(requestId, "REQUEST_TOO_LARGE", "Request body exceeds $MAX_REQUEST_BODY_SIZE bytes"))
+                return
+            }
+
+            val body = exchange.requestBody.readAllBytes().toString(StandardCharsets.UTF_8)
             val result = handler(body, requestId)
             val (payload, statusCode) = when (result) {
                 is Pair<*, *> -> result.first to (result.second as Int)
@@ -322,10 +334,17 @@ class PeerBridgeService(private val project: Project) : Disposable {
     }
 
     private fun respondJson(exchange: HttpExchange, statusCode: Int, payload: Any?) {
-        val raw = mapper.writeValueAsBytes(payload)
-        exchange.responseHeaders.add("Content-Type", "application/json; charset=utf-8")
-        exchange.sendResponseHeaders(statusCode, raw.size.toLong())
-        exchange.responseBody.use { output -> output.write(raw) }
+        try {
+            val raw = mapper.writeValueAsBytes(payload)
+            exchange.responseHeaders.add("Content-Type", "application/json; charset=utf-8")
+            exchange.sendResponseHeaders(statusCode, raw.size.toLong())
+            exchange.responseBody.use { output ->
+                output.write(raw)
+                output.flush()
+            }
+        } catch (error: Exception) {
+            exchange.responseBody.close()
+        }
     }
 
     private fun validateRequest(request: OpenLocationRequest): String? {
@@ -506,10 +525,22 @@ class PeerBridgeService(private val project: Project) : Disposable {
     // ── Config loading ──
 
     private fun loadConfigOrNull(): BridgeConfig? {
+        // Use cached config if available and not stale
+        val now = System.currentTimeMillis()
+        if (cachedConfig != null && (now - configCacheTime) < CONFIG_CACHE_TTL_MS) {
+            return cachedConfig
+        }
+
         val basePath = project.basePath ?: return null
         val configFile = findConfigFile(basePath) ?: return null
         val raw = mapper.readValue(configFile, RawBridgeConfig::class.java)
-        return resolveBridgeConfig(raw, EditorKind.rider)
+        val config = resolveBridgeConfig(raw, EditorKind.rider)
+        
+        // Cache the config
+        cachedConfig = config
+        configCacheTime = now
+        
+        return config
     }
 
     private fun findConfigFile(startPath: String): File? {
@@ -560,6 +591,9 @@ class PeerBridgeService(private val project: Project) : Disposable {
 
     override fun dispose() {
         stopServer()
+        // Clear config cache to free memory
+        cachedConfig = null
+        configCacheTime = 0
     }
 }
 

@@ -81,59 +81,69 @@ export class PeerServer {
       }
 
       if (method === 'POST' && url === '/peer/v1/can-handle') {
-        const body = await readJsonBody<OpenLocationRequest>(request)
-        const canHandle = canPeerHandleRequest(config, config.self, body)
-        this.writeJson(response, 200, success(requestId, {
-          canHandle,
-          reason: canHandle ? 'MATCHED' : 'NOT_MATCHED'
-        }))
+        try {
+          const body = await readJsonBody<OpenLocationRequest>(request)
+          const canHandle = canPeerHandleRequest(config, config.self, body)
+          this.writeJson(response, 200, success(requestId, {
+            canHandle,
+            reason: canHandle ? 'MATCHED' : 'NOT_MATCHED'
+          }))
+        } catch (parseError) {
+          const msg = parseError instanceof Error ? parseError.message : String(parseError)
+          this.writeJson(response, 400, error(requestId, 'INVALID_REQUEST', `Request parse error: ${msg}`))
+        }
         return
       }
 
       if (method === 'POST' && url === '/peer/v1/open-location') {
-        const body = await readJsonBody<OpenLocationRequest>(request)
-        const validationError = validateOpenLocationRequest(body)
-        if (validationError) {
-          this.writeJson(response, 400, error(requestId, 'INVALID_REQUEST', validationError))
-          return
-        }
-
-        const matchError = getMatchError(config, body)
-        if (matchError) {
-          this.writeJson(response, 409, error(requestId, matchError.code, matchError.message, matchError.details))
-          return
-        }
-
-        if (!fs.existsSync(body.document.filePath)) {
-          this.writeJson(response, 404, error(requestId, 'FILE_NOT_FOUND', 'Requested file does not exist.', {
-            filePath: body.document.filePath
-          }))
-          return
-        }
-
-        const fileSizeError = checkFileSize(body.document.filePath)
-        if (fileSizeError) {
-          this.writeJson(response, 413, error(requestId, 'FILE_TOO_LARGE', fileSizeError, {
-            filePath: body.document.filePath
-          }))
-          return
-        }
-
         try {
-          await openInVsCode(body)
-        } catch (openError) {
-          const msg = openError instanceof Error ? openError.message : String(openError)
-          this.writeJson(response, 500, error(requestId, 'OPEN_FAILED', msg, {
-            filePath: body.document.filePath
+          const body = await readJsonBody<OpenLocationRequest>(request)
+          const validationError = validateOpenLocationRequest(body)
+          if (validationError) {
+            this.writeJson(response, 400, error(requestId, 'INVALID_REQUEST', validationError))
+            return
+          }
+
+          const matchError = getMatchError(config, body)
+          if (matchError) {
+            this.writeJson(response, 409, error(requestId, matchError.code, matchError.message, matchError.details))
+            return
+          }
+
+          if (!fs.existsSync(body.document.filePath)) {
+            this.writeJson(response, 404, error(requestId, 'FILE_NOT_FOUND', 'Requested file does not exist.', {
+              filePath: body.document.filePath
+            }))
+            return
+          }
+
+          const fileSizeError = checkFileSize(body.document.filePath)
+          if (fileSizeError) {
+            this.writeJson(response, 413, error(requestId, 'FILE_TOO_LARGE', fileSizeError, {
+              filePath: body.document.filePath
+            }))
+            return
+          }
+
+          try {
+            await openInVsCode(body)
+          } catch (openError) {
+            const msg = openError instanceof Error ? openError.message : String(openError)
+            this.writeJson(response, 500, error(requestId, 'OPEN_FAILED', msg, {
+              filePath: body.document.filePath
+            }))
+            return
+          }
+          this.writeJson(response, 200, success(requestId, {
+            targetPeerId: config.self.peerId,
+            openedFile: body.document.filePath,
+            selectionApplied: true,
+            windowActivated: body.options.activateWindow
           }))
-          return
+        } catch (parseError) {
+          const msg = parseError instanceof Error ? parseError.message : String(parseError)
+          this.writeJson(response, 400, error(requestId, 'INVALID_REQUEST', `Request parse error: ${msg}`))
         }
-        this.writeJson(response, 200, success(requestId, {
-          targetPeerId: config.self.peerId,
-          openedFile: body.document.filePath,
-          selectionApplied: true,
-          windowActivated: body.options.activateWindow
-        }))
         return
       }
 
@@ -152,10 +162,21 @@ export class PeerServer {
   }
 }
 
+const MAX_REQUEST_BODY_BYTES = 1 * 1024 * 1024  // 1 MB max request size
+
 async function readJsonBody<T>(request: http.IncomingMessage): Promise<T> {
   const chunks: Buffer[] = []
+  let totalSize = 0
+  
   for await (const chunk of request) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+    totalSize += buf.length
+    
+    if (totalSize > MAX_REQUEST_BODY_BYTES) {
+      throw new Error(`Request body exceeds ${MAX_REQUEST_BODY_BYTES} bytes limit`)
+    }
+    
+    chunks.push(buf)
   }
 
   return JSON.parse(Buffer.concat(chunks).toString('utf8')) as T
