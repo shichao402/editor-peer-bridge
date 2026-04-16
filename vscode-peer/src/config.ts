@@ -9,6 +9,22 @@ const CONFIG_FILE_NAME = '.editor-peer-bridge.json'
 const PORT_RANGE_START = 47631
 const PORT_RANGE_END = 47700
 
+async function detectSolutionName(workspaceRoot: string): Promise<string | undefined> {
+  try {
+    const entries = await fs.readdir(workspaceRoot)
+    const slnFiles = entries.filter((f) => /\.slnx?$/i.test(f))
+    if (slnFiles.length !== 1) return undefined
+    const name = slnFiles[0].replace(/\.slnx?$/i, '')
+    const sanitized = name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')
+    return sanitized || undefined
+  } catch {
+    return undefined
+  }
+}
+
 function detectEditorKind(): EditorKind {
   const appName = vscode.env.appName.toLowerCase()
   if (appName.includes('codebuddy')) {
@@ -34,18 +50,31 @@ export async function loadBridgeConfig(): Promise<BridgeConfig> {
 
   const raw = await fs.readFile(configPath, 'utf8')
   const rawConfig = JSON.parse(raw) as RawBridgeConfig
+  const solutionName = await detectSolutionName(workspaceRoot)
 
-  return resolveBridgeConfig(rawConfig, detectEditorKind())
+  return resolveBridgeConfig(rawConfig, detectEditorKind(), solutionName)
 }
 
-function resolveBridgeConfig(raw: RawBridgeConfig, myEditorKind: EditorKind): BridgeConfig {
+function resolveBridgeConfig(
+  raw: RawBridgeConfig,
+  myEditorKind: EditorKind,
+  solutionName: string | undefined
+): BridgeConfig {
   const entries = Object.values(raw.peers)
 
   // Allow explicit peerId selection via environment variable (supports multiple instances of same editorKind)
   const explicitPeerId = process.env.EDITOR_PEER_BRIDGE_PEER_ID
-  const self = explicitPeerId
-    ? entries.find((p) => p.peerId === explicitPeerId)
-    : entries.find((p) => p.editorKind === myEditorKind)
+
+  let self: PeerEntry | undefined
+  if (explicitPeerId) {
+    self = entries.find((p) => p.peerId === explicitPeerId)
+  } else if (solutionName) {
+    self =
+      entries.find((p) => p.editorKind === myEditorKind && p.projectType === solutionName) ??
+      entries.find((p) => p.editorKind === myEditorKind)
+  } else {
+    self = entries.find((p) => p.editorKind === myEditorKind)
+  }
 
   if (!self) {
     const searchKey = explicitPeerId ?? myEditorKind
@@ -95,12 +124,13 @@ export async function ensureConfig(): Promise<void> {
 
   const editorKind = detectEditorKind()
   const explicitPeerId = process.env.EDITOR_PEER_BRIDGE_PEER_ID
+  const solutionName = await detectSolutionName(workspaceRoot)
   const existingPath = await findConfigPath(workspaceRoot)
 
   if (existingPath) {
-    await ensureSelfInConfig(existingPath, editorKind, workspaceRoot, explicitPeerId)
+    await ensureSelfInConfig(existingPath, editorKind, workspaceRoot, explicitPeerId, solutionName)
   } else {
-    await createInitialConfig(workspaceRoot, editorKind)
+    await createInitialConfig(workspaceRoot, editorKind, solutionName)
   }
 }
 
@@ -108,14 +138,20 @@ async function ensureSelfInConfig(
   configPath: string,
   editorKind: EditorKind,
   workspaceRoot: string,
-  explicitPeerId: string | undefined
+  explicitPeerId: string | undefined,
+  solutionName: string | undefined
 ): Promise<void> {
   const raw = JSON.parse(await fs.readFile(configPath, 'utf8')) as RawBridgeConfig
   const entries = Object.values(raw.peers)
 
+  const projectType = solutionName ?? 'all'
+
   // Check if self already exists
   if (explicitPeerId) {
     if (entries.some((p) => p.peerId === explicitPeerId)) return
+  } else if (solutionName) {
+    // Match by editorKind + projectType (allows multiple instances with different slns)
+    if (entries.some((p) => p.editorKind === editorKind && p.projectType === projectType)) return
   } else {
     if (entries.some((p) => p.editorKind === editorKind)) return
   }
@@ -124,7 +160,9 @@ async function ensureSelfInConfig(
   const usedPorts = new Set(entries.map((p) => p.port))
   const port = await findAvailablePort(usedPorts)
   const peerId = generatePeerId(editorKind, entries)
-  const instanceName = generateInstanceName(editorKind, entries)
+  const instanceName = solutionName
+    ? `${capitalize(editorKind)} (${solutionName})`
+    : generateInstanceName(editorKind, entries)
 
   const newPeer: PeerEntry = {
     peerId,
@@ -132,18 +170,39 @@ async function ensureSelfInConfig(
     instanceName,
     port,
     workspaceRoots: [workspaceRoot],
-    supportedProjectTypes: ['all'],
-    projectType: 'all'
+    supportedProjectTypes: [projectType],
+    projectType
   }
 
   raw.peers[peerId] = newPeer
+
+  // Ensure projectType exists in typeHierarchy
+  if (projectType !== 'all' && !raw.typeHierarchy[projectType]) {
+    raw.typeHierarchy[projectType] = []
+    if (raw.typeHierarchy['all'] && !raw.typeHierarchy['all'].includes(projectType)) {
+      raw.typeHierarchy['all'] = [...raw.typeHierarchy['all'], projectType]
+    }
+  }
+
   await fs.writeFile(configPath, JSON.stringify(raw, null, 2) + '\n', 'utf8')
 }
 
-async function createInitialConfig(workspaceRoot: string, editorKind: EditorKind): Promise<void> {
+async function createInitialConfig(
+  workspaceRoot: string,
+  editorKind: EditorKind,
+  solutionName: string | undefined
+): Promise<void> {
   const port = await findAvailablePort(new Set())
+  const projectType = solutionName ?? 'all'
   const peerId = `${editorKind}-01`
-  const instanceName = `${capitalize(editorKind)} 01`
+  const instanceName = solutionName
+    ? `${capitalize(editorKind)} (${solutionName})`
+    : `${capitalize(editorKind)} 01`
+
+  const typeHierarchy =
+    projectType !== 'all'
+      ? { all: [projectType], [projectType]: [] as string[] }
+      : { all: [] as string[] }
 
   const config: RawBridgeConfig = {
     peers: {
@@ -153,11 +212,11 @@ async function createInitialConfig(workspaceRoot: string, editorKind: EditorKind
         instanceName,
         port,
         workspaceRoots: [workspaceRoot],
-        supportedProjectTypes: ['all'],
-        projectType: 'all'
+        supportedProjectTypes: [projectType],
+        projectType
       }
     },
-    typeHierarchy: { all: [] },
+    typeHierarchy,
     routing: { requestTimeoutMs: 3000 }
   }
 
