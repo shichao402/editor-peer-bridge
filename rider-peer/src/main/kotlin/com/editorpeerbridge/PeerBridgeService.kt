@@ -422,26 +422,44 @@ class PeerBridgeService(private val project: Project) : Disposable {
 
     // ── Auto-config: ensure config exists and self is registered ──
 
+    private fun detectSolutionName(): String? {
+        val name = project.name
+        if (name.isBlank()) return null
+        return name.lowercase()
+            .replace(Regex("[^a-z0-9]+"), "-")
+            .trim('-')
+            .ifEmpty { null }
+    }
+
     private fun ensureConfig() {
         val basePath = project.basePath ?: return
         val editorKind = EditorKind.rider
         val explicitPeerId = System.getProperty("editor.peer.bridge.peerId")
+        val solutionName = detectSolutionName()
 
         val existingFile = findConfigFile(basePath)
         if (existingFile != null) {
-            ensureSelfInConfig(existingFile, editorKind, basePath, explicitPeerId)
+            ensureSelfInConfig(existingFile, editorKind, basePath, explicitPeerId, solutionName)
         } else {
-            createInitialConfig(basePath, editorKind)
+            createInitialConfig(basePath, editorKind, solutionName)
         }
     }
 
-    private fun ensureSelfInConfig(configFile: File, editorKind: EditorKind, workspaceRoot: String, explicitPeerId: String?) {
+    private fun ensureSelfInConfig(
+        configFile: File, editorKind: EditorKind, workspaceRoot: String,
+        explicitPeerId: String?, solutionName: String?,
+    ) {
         val raw = mapper.readValue(configFile, RawBridgeConfig::class.java)
         val entries = raw.peers.values.toList()
+
+        val projectType = solutionName ?: "all"
 
         // Check if self already exists
         if (explicitPeerId != null) {
             if (entries.any { it.peerId == explicitPeerId }) return
+        } else if (solutionName != null) {
+            // Match by editorKind + projectType (allows multiple Riders with different slns)
+            if (entries.any { it.editorKind == editorKind && it.projectType == projectType }) return
         } else {
             if (entries.any { it.editorKind == editorKind }) return
         }
@@ -450,7 +468,11 @@ class PeerBridgeService(private val project: Project) : Disposable {
         val usedPorts = entries.map { it.port }.toSet()
         val port = findAvailablePort(usedPorts)
         val peerId = generatePeerId(editorKind, entries)
-        val instanceName = generateInstanceName(editorKind, entries)
+        val instanceName = if (solutionName != null) {
+            "${editorKind.name.replaceFirstChar { it.uppercase() }} ($solutionName)"
+        } else {
+            generateInstanceName(editorKind, entries)
+        }
 
         val newPeer = PeerEntry(
             peerId = peerId,
@@ -458,20 +480,44 @@ class PeerBridgeService(private val project: Project) : Disposable {
             instanceName = instanceName,
             port = port,
             workspaceRoots = listOf(workspaceRoot),
-            supportedProjectTypes = listOf("all"),
-            projectType = "all",
+            supportedProjectTypes = listOf(projectType),
+            projectType = projectType,
         )
 
         val updatedPeers = raw.peers.toMutableMap()
         updatedPeers[peerId] = newPeer
-        val updated = raw.copy(peers = updatedPeers)
+
+        // Ensure projectType exists in typeHierarchy
+        val updatedHierarchy = raw.typeHierarchy.toMutableMap()
+        if (projectType != "all" && !updatedHierarchy.containsKey(projectType)) {
+            updatedHierarchy[projectType] = emptyList()
+            // Add to "all" children if "all" exists
+            updatedHierarchy["all"]?.let { allChildren ->
+                if (!allChildren.contains(projectType)) {
+                    updatedHierarchy["all"] = allChildren + projectType
+                }
+            }
+        }
+
+        val updated = raw.copy(peers = updatedPeers, typeHierarchy = updatedHierarchy)
         configFile.writeText(mapper.writerWithDefaultPrettyPrinter().writeValueAsString(updated) + "\n")
     }
 
-    private fun createInitialConfig(workspaceRoot: String, editorKind: EditorKind) {
+    private fun createInitialConfig(workspaceRoot: String, editorKind: EditorKind, solutionName: String?) {
         val port = findAvailablePort(emptySet())
+        val projectType = solutionName ?: "all"
         val peerId = "${editorKind.name}-01"
-        val instanceName = "${editorKind.name.replaceFirstChar { it.uppercase() }} 01"
+        val instanceName = if (solutionName != null) {
+            "${editorKind.name.replaceFirstChar { it.uppercase() }} ($solutionName)"
+        } else {
+            "${editorKind.name.replaceFirstChar { it.uppercase() }} 01"
+        }
+
+        val typeHierarchy = if (projectType != "all") {
+            mapOf("all" to listOf(projectType), projectType to emptyList())
+        } else {
+            mapOf("all" to emptyList())
+        }
 
         val config = RawBridgeConfig(
             peers = mapOf(
@@ -481,11 +527,11 @@ class PeerBridgeService(private val project: Project) : Disposable {
                     instanceName = instanceName,
                     port = port,
                     workspaceRoots = listOf(workspaceRoot),
-                    supportedProjectTypes = listOf("all"),
-                    projectType = "all",
+                    supportedProjectTypes = listOf(projectType),
+                    projectType = projectType,
                 ),
             ),
-            typeHierarchy = mapOf("all" to emptyList()),
+            typeHierarchy = typeHierarchy,
             routing = RoutingConfig(requestTimeoutMs = 3000),
         )
 
@@ -560,11 +606,15 @@ class PeerBridgeService(private val project: Project) : Disposable {
 
         // Allow explicit peerId selection via JVM property (supports multiple instances of same editorKind)
         val explicitPeerId = System.getProperty("editor.peer.bridge.peerId")
-        val self = if (explicitPeerId != null) {
-            entries.firstOrNull { it.peerId == explicitPeerId }
+        val solutionName = detectSolutionName()
+
+        val self = when {
+            explicitPeerId != null -> entries.firstOrNull { it.peerId == explicitPeerId }
                 ?: throw IllegalStateException("No peer entry found for peerId '$explicitPeerId' in .editor-peer-bridge.json")
-        } else {
-            entries.firstOrNull { it.editorKind == myEditorKind }
+            solutionName != null -> entries.firstOrNull { it.editorKind == myEditorKind && it.projectType == solutionName }
+                ?: entries.firstOrNull { it.editorKind == myEditorKind }
+                ?: throw IllegalStateException("No peer entry found for editorKind '$myEditorKind' in .editor-peer-bridge.json")
+            else -> entries.firstOrNull { it.editorKind == myEditorKind }
                 ?: throw IllegalStateException("No peer entry found for editorKind '$myEditorKind' in .editor-peer-bridge.json")
         }
 

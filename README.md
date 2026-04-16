@@ -7,7 +7,8 @@ Cross-editor code navigation tool. Jump between Rider, VSCode, Cursor, and CodeB
 - **Bidirectional jump** - Navigate from any editor to any other editor in the same project
 - **Multi-target selection** - Choose a specific target or broadcast to all peers
 - **Auto-config** - Configuration file is generated automatically on first launch
-- **Multi-instance support** - Run multiple instances of the same editor on the same project
+- **Solution auto-detection** - Rider detects the loaded `.sln` name and uses it as `projectType`
+- **Multi-instance support** - Run multiple Rider instances on the same directory with different solutions
 
 ## Supported Editors
 
@@ -93,9 +94,49 @@ The plugin reads `.editor-peer-bridge.json` from the project root (or any parent
 | `typeHierarchy` | Defines parent-child relationships between project types |
 | `routing.requestTimeoutMs` | Timeout for jump requests (default: 3000ms) |
 
-### Multi-Instance Support
+### Solution Auto-Detection (Rider)
 
-To run multiple instances of the same editor kind on the same project, set an explicit peer ID:
+When Rider opens a project, the plugin automatically detects the loaded `.sln` (or `.slnx`) name and uses it as the `projectType`. This allows multiple Rider instances on the same directory to coexist, each identified by its solution.
+
+For example, if you open `GameCore.sln` and `Tools.sln` in two separate Rider instances on the same project directory, the config will contain:
+
+```json
+{
+  "peers": {
+    "rider-01": {
+      "peerId": "rider-01",
+      "editorKind": "rider",
+      "instanceName": "Rider (gamecore)",
+      "port": 47631,
+      "workspaceRoots": ["D:/workspace/game-client"],
+      "supportedProjectTypes": ["gamecore"],
+      "projectType": "gamecore"
+    },
+    "rider-02": {
+      "peerId": "rider-02",
+      "editorKind": "rider",
+      "instanceName": "Rider (tools)",
+      "port": 47632,
+      "workspaceRoots": ["D:/workspace/game-client"],
+      "supportedProjectTypes": ["tools"],
+      "projectType": "tools"
+    }
+  },
+  "typeHierarchy": {
+    "all": ["gamecore", "tools"],
+    "gamecore": [],
+    "tools": []
+  }
+}
+```
+
+The solution name is sanitized to lowercase with hyphens (e.g. `My Game.sln` becomes `my-game`). The detected `projectType` is also automatically added to `typeHierarchy` under `"all"`.
+
+If no solution is detected, the plugin falls back to `projectType: "all"` (the previous default behavior).
+
+### Multi-Instance Support (Explicit)
+
+For cases not covered by auto-detection, you can set an explicit peer ID:
 
 - **VSCode/Cursor/CodeBuddy**: Set environment variable `EDITOR_PEER_BRIDGE_PEER_ID=my-cursor-02`
 - **Rider**: Set JVM property `-Deditor.peer.bridge.peerId=my-rider-02`
