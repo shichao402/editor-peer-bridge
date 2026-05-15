@@ -14,7 +14,7 @@ Cross-editor code navigation tool. Jump between Rider, VSCode, Cursor, and CodeB
 
 | Editor | Version | Plugin |
 |--------|---------|--------|
-| JetBrains Rider | 2024.1+ | Rider plugin (ZIP) |
+| JetBrains Rider | 2026.1+ | Rider plugin (ZIP) |
 | Visual Studio Code | 1.95+ | VSCode extension (VSIX) |
 | Cursor | Latest | VSCode extension (VSIX) |
 | CodeBuddy | Latest | VSCode extension (VSIX) |
@@ -174,7 +174,7 @@ npx @vscode/vsce package
 
 ### Rider Plugin
 
-Requires JDK 17+ and Gradle 8+.
+Requires JDK 17+ and Gradle 9+.
 
 ```bash
 cd rider-peer
@@ -182,6 +182,24 @@ gradle buildPlugin
 ```
 
 Output: `rider-peer/build/distributions/editor-peer-bridge-rider-x.x.x.zip`
+
+## Publishing
+
+A cross-platform Node.js tool publishes both plugins to their marketplaces.
+
+```bash
+# 1. Configure tokens (gitignored)
+cp release.config.example.json release.config.json
+# edit release.config.json and fill in vscode.pat and rider.token
+
+# 2. Publish
+npm run release            # both
+npm run release:vscode     # VS Code Marketplace only
+npm run release:rider      # JetBrains Marketplace only
+npm run release:dry        # build/package only, no upload
+```
+
+Token sources (priority): `VSCE_PAT` / `JETBRAINS_PUBLISH_TOKEN` env vars > `release.config.json`. See [`scripts/README.md`](scripts/README.md) for details.
 
 ## License
 

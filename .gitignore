@@ -11,6 +11,10 @@ rider-peer/build/
 rider-peer/.gradle/
 rider-peer/.idea/
 
+# Release tooling
+release.config.json
+node_modules/
+
 # OS
 .DS_Store
 Thumbs.db

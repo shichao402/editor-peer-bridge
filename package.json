@@ -1,0 +1,13 @@
+{
+  "name": "editor-peer-bridge",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Cross-editor peer bridge — release tooling root",
+  "scripts": {
+    "release": "node scripts/release.mjs",
+    "release:vscode": "node scripts/release.mjs vscode",
+    "release:rider": "node scripts/release.mjs rider",
+    "release:dry": "node scripts/release.mjs --dry-run"
+  }
+}
