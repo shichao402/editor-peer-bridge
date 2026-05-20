@@ -174,7 +174,7 @@ npx @vscode/vsce package
 
 ### Rider Plugin
 
-Requires JDK 17+ and Gradle 9+.
+Requires JDK 17+ and Gradle 8.x.
 
 ```bash
 cd rider-peer

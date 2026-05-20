@@ -20,7 +20,7 @@ Cross-platform Node.js publisher for `vscode-peer` and `rider-peer`.
 3. Make sure these are on your PATH:
    - `node` (>= 18)
    - `npm` / `npx`
-   - `gradle` (>= 9.0; see project memory for IntelliJ Platform plugin 2.15 requirement)
+   - `gradle` (8.x; compatible with the current IntelliJ Gradle plugin)
 
 ## Commands
 
