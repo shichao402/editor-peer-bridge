@@ -1,0 +1,60 @@
+name: Package
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    name: Package plugins
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: vscode-peer/package-lock.json
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.0.0'
+
+      - name: Package plugins
+        run: npm run release:dry
+
+      - name: Upload VS Code package
+        uses: actions/upload-artifact@v4
+        with:
+          name: vscode-peer-vsix
+          path: vscode-peer/*.vsix
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload Rider package
+        uses: actions/upload-artifact@v4
+        with:
+          name: rider-peer-plugin
+          path: rider-peer/build/distributions/*.zip
+          if-no-files-found: error
+          retention-days: 30

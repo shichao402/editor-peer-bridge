@@ -187,19 +187,50 @@ Output: `rider-peer/build/distributions/editor-peer-bridge-rider-x.x.x.zip`
 
 A cross-platform Node.js tool publishes both plugins to their marketplaces.
 
+### GitHub Actions packaging
+
+The GitHub Actions workflow only builds/packages plugins. It does not publish to any marketplace and does not require publishing secrets.
+
+It runs automatically when a `v*` tag is pushed:
+
+```bash
+git tag v0.0.1
+git push origin v0.0.1
+```
+
+You can also run the `Package` workflow manually from GitHub Actions.
+
+Download these artifacts from the workflow run before publishing locally:
+
+- `vscode-peer-vsix` — VS Code `.vsix` package
+- `rider-peer-plugin` — Rider plugin `.zip` package
+
+### Local release from Actions artifacts
+
+Publish the downloaded VS Code package:
+
+```bash
+npx @vscode/vsce login shichao402
+npx @vscode/vsce publish --packagePath path/to/editor-peer-bridge-vscode-peer-*.vsix
+```
+
+Publish the downloaded Rider package by uploading the `.zip` file in JetBrains Marketplace.
+
+### Local build and release
+
 ```bash
 # 1. Configure tokens (gitignored)
 cp release.config.example.json release.config.json
 # edit release.config.json and fill in vscode.pat and rider.token
 
-# 2. Publish
+# 2. Publish from local build
 npm run release            # both
 npm run release:vscode     # VS Code Marketplace only
 npm run release:rider      # JetBrains Marketplace only
 npm run release:dry        # build/package only, no upload
 ```
 
-Token sources (priority): `VSCE_PAT` / `JETBRAINS_PUBLISH_TOKEN` env vars > `release.config.json`. See [`scripts/README.md`](scripts/README.md) for details.
+Token sources for local script publishing (priority): `VSCE_PAT` / `JETBRAINS_PUBLISH_TOKEN` env vars > `release.config.json`. See [`scripts/README.md`](scripts/README.md) for details.
 
 ## License
 
