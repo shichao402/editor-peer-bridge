@@ -204,11 +204,15 @@ function createSpawnConfig(cmd, args, opts = {}, stdio = 'inherit') {
     return { resolved, spawnCmd, spawnArgs, spawnOpts };
 }
 
+function redactArgs(args) {
+    return args.map((arg, index) => (args[index - 1] === '--pat' ? '<redacted>' : arg));
+}
+
 function runStep(label, cmd, args, opts = {}) {
     return new Promise((resolveStep, rejectStep) => {
         const { resolved, spawnCmd, spawnArgs, spawnOpts } = createSpawnConfig(cmd, args, opts);
         console.log(`\n[release] >>> ${label}`);
-        console.log(`[release]     ${resolved} ${args.join(' ')}`);
+        console.log(`[release]     ${resolved} ${redactArgs(args).join(' ')}`);
         if (opts.cwd) console.log(`[release]     cwd: ${opts.cwd}`);
 
         const child = spawn(spawnCmd, spawnArgs, spawnOpts);
