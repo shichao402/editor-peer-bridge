@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 // Cross-platform release tool for Editor Peer Bridge.
 // - vscode-peer  -> VS Code Marketplace via @vscode/vsce
+// - vscode-peer  -> Open VSX Registry via ovsx
 // - rider-peer   -> JetBrains Marketplace via Marketplace Upload API or Gradle publishPlugin
 //
 // Usage:
-//   node scripts/release.mjs [vscode|rider|all] [--dry-run] [--skip-build] [--from-latest|--from-tag <tag>|--from-run <github-run-id>]
+//   node scripts/release.mjs [vscode|openvsx|rider|all] [--dry-run] [--skip-build] [--from-latest|--from-tag <tag>|--from-run <github-run-id>]
 //
 // Token sources (priority high -> low):
-//   1. environment variables: VSCE_PAT, JETBRAINS_PUBLISH_TOKEN
+//   1. environment variables: VSCE_PAT, OVSX_PAT, JETBRAINS_PUBLISH_TOKEN
 //   2. release.config.json at repo root
 
 import { spawn } from 'node:child_process';
@@ -30,6 +31,7 @@ const RIDER_PLUGIN_XML = resolve(REPO_ROOT, 'rider-peer/src/main/resources/META-
 const JETBRAINS_UPLOAD_URL = 'https://plugins.jetbrains.com/api/updates/upload';
 const ARTIFACTS = {
     vscode: { name: 'vscode-peer-vsix', ext: '.vsix' },
+    openvsx: { name: 'vscode-peer-vsix', ext: '.vsix' },
     rider: { name: 'rider-peer-plugin', ext: '.zip' },
 };
 const IS_WINDOWS = process.platform === 'win32';
@@ -77,7 +79,7 @@ function parseArgs(argv) {
             flags.fromTag = value;
         } else if (arg === '--from-latest') {
             flags.fromLatest = true;
-        } else if (arg === 'vscode' || arg === 'rider' || arg === 'all') targets.push(arg);
+        } else if (arg === 'vscode' || arg === 'rider' || arg === 'openvsx' || arg === 'all') targets.push(arg);
         else {
             console.error(`Unknown argument: ${arg}`);
             process.exit(2);
@@ -95,6 +97,7 @@ function parseArgs(argv) {
     for (const t of targets) {
         if (t === 'all') {
             expanded.add('vscode');
+            expanded.add('openvsx');
             expanded.add('rider');
         } else {
             expanded.add(t);
@@ -107,12 +110,13 @@ function printHelp() {
     console.log(`Editor Peer Bridge release tool
 
 Usage:
-  node scripts/release.mjs [vscode|rider|all] [--dry-run] [--skip-build] [--from-latest|--from-tag <tag>|--from-run <github-run-id>]
+  node scripts/release.mjs [vscode|openvsx|rider|all] [--dry-run] [--skip-build] [--from-latest|--from-tag <tag>|--from-run <github-run-id>]
 
 Targets:
   vscode    Publish vscode-peer to VS Code Marketplace
+  openvsx   Publish vscode-peer to Open VSX Registry
   rider     Publish rider-peer to JetBrains Marketplace
-  all       Both (default)
+  all       All targets (default)
 
 Options:
   --dry-run              Build/package only, do not upload
@@ -123,8 +127,9 @@ Options:
   -h, --help             Show this help
 
 Tokens are read from release.config.json (gitignored) or environment
-variables VSCE_PAT / JETBRAINS_PUBLISH_TOKEN. VS Code Marketplace
-publishing is skipped when VSCE_PAT / vscode.pat is missing.
+variables VSCE_PAT / OVSX_PAT / JETBRAINS_PUBLISH_TOKEN. VS Code
+Marketplace publishing is skipped when VSCE_PAT / vscode.pat is missing.
+Open VSX publishing is skipped when OVSX_PAT / openvsx.pat is missing.
 
 When using --from-latest, --from-tag, or --from-run, the GitHub CLI (gh) must be installed and authenticated.`);
 }
@@ -143,8 +148,9 @@ function loadConfig() {
 
 function resolveTokens(config) {
     const vscePat = process.env.VSCE_PAT || config?.vscode?.pat || '';
+    const openVsxPat = process.env.OVSX_PAT || config?.openvsx?.pat || '';
     const jbToken = process.env.JETBRAINS_PUBLISH_TOKEN || config?.rider?.token || '';
-    return { vscePat, jbToken };
+    return { vscePat, openVsxPat, jbToken };
 }
 
 function requireToken(value, name, target) {
@@ -348,6 +354,13 @@ function buildVscodePublishArgs({ pat, packagePath }) {
     return args;
 }
 
+function buildOpenVsxPublishArgs({ pat, packagePath }) {
+    const args = ['--yes', 'ovsx', 'publish'];
+    if (packagePath) args.push(packagePath);
+    args.push('--pat', pat);
+    return args;
+}
+
 async function publishVscode({ pat, dryRun, skipBuild, packagePath }) {
     const cwd = resolve(REPO_ROOT, 'vscode-peer');
 
@@ -390,6 +403,53 @@ async function publishVscode({ pat, dryRun, skipBuild, packagePath }) {
             'vscode: publish to Marketplace',
             'npx',
             buildVscodePublishArgs({ pat }),
+            { cwd }
+        );
+    }
+}
+
+async function publishOpenVsx({ pat, dryRun, skipBuild, packagePath }) {
+    const cwd = resolve(REPO_ROOT, 'vscode-peer');
+
+    if (!pat && !dryRun) {
+        console.log('[release] openvsx: OVSX_PAT / openvsx.pat not configured; skipping Registry publish');
+        return;
+    }
+
+    if (packagePath) {
+        if (dryRun) {
+            console.log(`[release] openvsx: artifact ready (dry-run): ${packagePath}`);
+            return;
+        }
+
+        await runStep(
+            'openvsx: publish artifact to Registry',
+            'npx',
+            buildOpenVsxPublishArgs({ pat, packagePath }),
+            { cwd }
+        );
+        return;
+    }
+
+    if (!skipBuild) {
+        await runStep('openvsx: install dependencies', 'npm', ['install'], { cwd });
+        await runStep('openvsx: compile TypeScript', 'npm', ['run', 'compile'], { cwd });
+    } else {
+        console.log('[release] openvsx: skipping install/compile (--skip-build)');
+    }
+
+    if (dryRun) {
+        await runStep(
+            'openvsx: package vsix (dry-run)',
+            'npx',
+            ['--yes', '@vscode/vsce', 'package'],
+            { cwd }
+        );
+    } else {
+        await runStep(
+            'openvsx: publish to Registry',
+            'npx',
+            buildOpenVsxPublishArgs({ pat }),
             { cwd }
         );
     }
@@ -470,7 +530,7 @@ async function main() {
     if (args.fromTag) validateTag(args.fromTag);
 
     const config = loadConfig();
-    const { vscePat, jbToken } = resolveTokens(config);
+    const { vscePat, openVsxPat, jbToken } = resolveTokens(config);
 
     if (args.targets.includes('rider') && !args.dryRun) {
         requireToken(jbToken, 'JETBRAINS_PUBLISH_TOKEN', 'rider');
@@ -494,6 +554,13 @@ async function main() {
                 dryRun: args.dryRun,
                 skipBuild: args.skipBuild,
                 packagePath: artifactPaths.vscode,
+            });
+        } else if (target === 'openvsx') {
+            await publishOpenVsx({
+                pat: openVsxPat,
+                dryRun: args.dryRun,
+                skipBuild: args.skipBuild,
+                packagePath: artifactPaths.openvsx,
             });
         } else if (target === 'rider') {
             await publishRider({

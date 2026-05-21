@@ -1,8 +1,11 @@
 {
   "$schema": "./scripts/release.config.schema.json",
-  "_comment": "Copy this file to release.config.json (gitignored) and fill in real tokens. Environment variables VSCE_PAT and JETBRAINS_PUBLISH_TOKEN take precedence.",
+  "_comment": "Copy this file to release.config.json (gitignored) and fill in real tokens. Environment variables VSCE_PAT, OVSX_PAT, and JETBRAINS_PUBLISH_TOKEN take precedence.",
   "vscode": {
     "pat": "<VSCE_PAT - https://dev.azure.com/ user PAT with Marketplace > Manage scope>"
+  },
+  "openvsx": {
+    "pat": "<OVSX_PAT - https://open-vsx.org/user-settings/tokens>"
   },
   "rider": {
     "token": "<JETBRAINS_PUBLISH_TOKEN - https://plugins.jetbrains.com/author/me/tokens>"

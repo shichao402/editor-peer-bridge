@@ -1,6 +1,6 @@
 # Release tooling
 
-Cross-platform Node.js publisher for `vscode-peer` and `rider-peer`.
+Cross-platform Node.js publisher for `vscode-peer` (VS Code Marketplace and Open VSX) and `rider-peer`.
 
 ## One-time setup
 
@@ -14,6 +14,9 @@ Cross-platform Node.js publisher for `vscode-peer` and `rider-peer`.
    - **JetBrains Marketplace** (`rider.token`): https://plugins.jetbrains.com/author/me/tokens
    - **VS Code Marketplace** (`vscode.pat`, optional): Azure DevOps PAT with `Marketplace > Manage` scope.
      If `vscode.pat` / `VSCE_PAT` is not configured, VS Code Marketplace publishing is skipped.
+   - **Open VSX Registry** (`openvsx.pat`, optional): https://open-vsx.org/user-settings/tokens.
+     If `openvsx.pat` / `OVSX_PAT` is not configured, Open VSX publishing is skipped.
+     Before first publish, create or claim the namespace matching `vscode-peer/package.json`'s `publisher`.
 
    `release.config.json` is gitignored.
 
@@ -44,6 +47,7 @@ From the repo root:
 # Publish artifacts from the Package workflow run for the repo version tag
 npm run release -- --from-tag v$(cat VERSION)
 npm run release:vscode -- --from-tag v$(cat VERSION)
+npm run release:openvsx -- --from-tag v$(cat VERSION)
 npm run release:rider -- --from-tag v$(cat VERSION)
 
 # Validate artifact download without uploading
@@ -56,6 +60,7 @@ npm run release -- --from-run <run-id>
 # Local build and publish
 npm run release
 npm run release:vscode
+npm run release:openvsx
 npm run release:rider
 
 # Build/package only, no upload
@@ -63,6 +68,7 @@ npm run release:dry
 
 # Direct invocation with extra options
 node scripts/release.mjs vscode --skip-build
+node scripts/release.mjs openvsx --dry-run
 node scripts/release.mjs rider --dry-run
 ```
 
@@ -71,6 +77,7 @@ node scripts/release.mjs rider --dry-run
 These env vars take precedence over `release.config.json`:
 
 - `VSCE_PAT` — optional VS Code Marketplace PAT; if missing, VS Code Marketplace publishing is skipped
+- `OVSX_PAT` — optional Open VSX Registry PAT; if missing, Open VSX publishing is skipped
 - `JETBRAINS_PUBLISH_TOKEN` — JetBrains Marketplace token
 
 Useful for CI without committing tokens to disk.
@@ -87,7 +94,9 @@ Useful for CI without committing tokens to disk.
 
 ## How it maps to existing tooling
 
-- vscode-peer local build: `npx @vscode/vsce publish --pat <token>` when configured; skipped when no VS Code PAT is configured (cwd = `vscode-peer/`)
-- vscode-peer from Actions artifact: `npx @vscode/vsce publish --packagePath <downloaded.vsix> --pat <token>` when configured; skipped when no VS Code PAT is configured
+- vscode-peer local build to VS Code Marketplace: `npx @vscode/vsce publish --pat <token>` when configured; skipped when no VS Code PAT is configured (cwd = `vscode-peer/`)
+- vscode-peer from Actions artifact to VS Code Marketplace: `npx @vscode/vsce publish --packagePath <downloaded.vsix> --pat <token>` when configured; skipped when no VS Code PAT is configured
+- vscode-peer local build to Open VSX Registry: `npx ovsx publish --pat <token>` when configured; skipped when no Open VSX PAT is configured (cwd = `vscode-peer/`)
+- vscode-peer from Actions artifact to Open VSX Registry: `npx ovsx publish <downloaded.vsix> --pat <token>` when configured; skipped when no Open VSX PAT is configured
 - rider-peer local build: `gradle publishPlugin` with `JETBRAINS_PUBLISH_TOKEN` injected.
 - rider-peer from Actions artifact: upload the downloaded `.zip` to JetBrains Marketplace Upload API using `xmlId` from `rider-peer/src/main/resources/META-INF/plugin.xml`.

@@ -185,7 +185,7 @@ Output: `rider-peer/build/distributions/editor-peer-bridge-rider-x.x.x.zip`
 
 ## Publishing
 
-A cross-platform Node.js tool publishes both plugins to their marketplaces.
+A cross-platform Node.js tool publishes the plugins to VS Code Marketplace, Open VSX Registry, and JetBrains Marketplace.
 
 ### GitHub Actions packaging
 
@@ -211,7 +211,7 @@ You can also run the `Package` workflow manually from GitHub Actions; it still p
 
 The workflow uploads these artifacts for 30 days:
 
-- `vscode-peer-vsix` — VS Code `.vsix` package
+- `vscode-peer-vsix` — VS Code / Open VSX `.vsix` package
 - `rider-peer-plugin` — Rider plugin `.zip` package
 
 ### Local release from Actions artifacts
@@ -227,12 +227,13 @@ Target one marketplace if needed:
 
 ```bash
 npm run release:vscode -- --from-tag v$(cat VERSION)
+npm run release:openvsx -- --from-tag v$(cat VERSION)
 npm run release:rider -- --from-tag v$(cat VERSION)
 ```
 
 `--from-latest` is available as a debug shortcut, but release publishing should use `--from-tag` so the artifact source is explicit.
 
-The release tool finds the matching successful `Package` workflow run, downloads the selected artifacts into `.release-artifacts/`, and publishes them locally. JetBrains still needs `JETBRAINS_PUBLISH_TOKEN` or `release.config.json`. VS Code uses `VSCE_PAT` when configured; otherwise VS Code Marketplace publishing is skipped.
+The release tool finds the matching successful `Package` workflow run, downloads the selected artifacts into `.release-artifacts/`, and publishes them locally. JetBrains still needs `JETBRAINS_PUBLISH_TOKEN` or `release.config.json`. VS Code uses `VSCE_PAT` when configured; otherwise VS Code Marketplace publishing is skipped. Open VSX uses `OVSX_PAT` when configured; otherwise Open VSX publishing is skipped.
 
 ### Local build and release
 
@@ -240,19 +241,20 @@ The release tool finds the matching successful `Package` workflow run, downloads
 # 1. Configure tokens (gitignored)
 cp release.config.example.json release.config.json
 # edit release.config.json and fill in rider.token
-# optional: fill in vscode.pat; VS Code publishing is skipped without it
+# optional: fill in vscode.pat / openvsx.pat; those publishes are skipped without them
 
 # 2. Validate the repo-owned version
 npm run version:check
 
 # 3. Publish from local build
-npm run release            # both
+npm run release            # all targets
 npm run release:vscode     # VS Code Marketplace only
+npm run release:openvsx    # Open VSX Registry only
 npm run release:rider      # JetBrains Marketplace only
 npm run release:dry        # build/package only, no upload
 ```
 
-Token sources for local script publishing (priority): `VSCE_PAT` / `JETBRAINS_PUBLISH_TOKEN` env vars > `release.config.json`. See [`scripts/README.md`](scripts/README.md) for details.
+Token sources for local script publishing (priority): `VSCE_PAT` / `OVSX_PAT` / `JETBRAINS_PUBLISH_TOKEN` env vars > `release.config.json`. See [`scripts/README.md`](scripts/README.md) for details.
 
 ## License
 

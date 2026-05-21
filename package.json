@@ -7,6 +7,7 @@
   "scripts": {
     "release": "node scripts/release.mjs",
     "release:vscode": "node scripts/release.mjs vscode",
+    "release:openvsx": "node scripts/release.mjs openvsx",
     "release:rider": "node scripts/release.mjs rider",
     "release:dry": "node scripts/release.mjs --dry-run",
     "version:read": "node scripts/version.mjs read",
