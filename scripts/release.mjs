@@ -19,6 +19,7 @@ import {
 } from 'node:fs';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { validateTag, validateVersions } from './version.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
@@ -464,6 +465,9 @@ async function main() {
         printHelp();
         return;
     }
+
+    validateVersions();
+    if (args.fromTag) validateTag(args.fromTag);
 
     const config = loadConfig();
     const { vscePat, jbToken } = resolveTokens(config);

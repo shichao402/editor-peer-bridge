@@ -189,16 +189,25 @@ A cross-platform Node.js tool publishes both plugins to their marketplaces.
 
 ### GitHub Actions packaging
 
-The GitHub Actions workflow only builds/packages plugins. It does not publish to any marketplace and does not require publishing secrets.
-
-It runs automatically when a `v*` tag is pushed:
+The root [`VERSION`](VERSION) file is the single release version source. Before tagging a release, update it and sync the derived plugin metadata:
 
 ```bash
-git tag v0.0.1
-git push origin v0.0.1
+npm run version:read
+# edit VERSION
+npm run version:sync
+npm run version:check
 ```
 
-You can also run the `Package` workflow manually from GitHub Actions.
+Commit the resulting changes, then tag with the same version:
+
+```bash
+git tag v$(cat VERSION)
+git push origin v$(cat VERSION)
+```
+
+The GitHub Actions workflow only builds/packages plugins. It does not publish to any marketplace and does not require publishing secrets. On tag builds, it fails if the tag does not match `VERSION`.
+
+You can also run the `Package` workflow manually from GitHub Actions; it still packages the checked-in `VERSION`.
 
 The workflow uploads these artifacts for 30 days:
 
@@ -207,25 +216,21 @@ The workflow uploads these artifacts for 30 days:
 
 ### Local release from Actions artifacts
 
-Install and authenticate the GitHub CLI, then publish artifacts from the latest successful packaging run:
+Install and authenticate the GitHub CLI, then publish artifacts from the matching release tag:
 
 ```bash
 gh auth login
-npm run release -- --from-latest
-```
-
-For a specific release tag, use the tag name instead of looking up the GitHub Actions run id:
-
-```bash
-npm run release -- --from-tag v0.0.1
+npm run release -- --from-tag v$(cat VERSION)
 ```
 
 Target one marketplace if needed:
 
 ```bash
-npm run release:vscode -- --from-tag v0.0.1
-npm run release:rider -- --from-tag v0.0.1
+npm run release:vscode -- --from-tag v$(cat VERSION)
+npm run release:rider -- --from-tag v$(cat VERSION)
 ```
+
+`--from-latest` is available as a debug shortcut, but release publishing should use `--from-tag` so the artifact source is explicit.
 
 The release tool finds the matching successful `Package` workflow run, downloads the selected artifacts into `.release-artifacts/`, and publishes them locally. JetBrains still needs `JETBRAINS_PUBLISH_TOKEN` or `release.config.json`. VS Code uses `VSCE_PAT` when configured; otherwise VS Code Marketplace publishing is skipped.
 
@@ -237,7 +242,10 @@ cp release.config.example.json release.config.json
 # edit release.config.json and fill in rider.token
 # optional: fill in vscode.pat; VS Code publishing is skipped without it
 
-# 2. Publish from local build
+# 2. Validate the repo-owned version
+npm run version:check
+
+# 3. Publish from local build
 npm run release            # both
 npm run release:vscode     # VS Code Marketplace only
 npm run release:rider      # JetBrains Marketplace only

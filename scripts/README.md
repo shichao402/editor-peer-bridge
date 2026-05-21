@@ -23,23 +23,34 @@ Cross-platform Node.js publisher for `vscode-peer` and `rider-peer`.
    - `gh` authenticated with access to the repository, when publishing from GitHub Actions artifacts
    - `gradle` (8.x; only needed for local Rider builds)
 
+## Version source
+
+The root `VERSION` file is the single release version source. Before tagging a release:
+
+```bash
+# edit VERSION, then sync package/build metadata
+npm run version:sync
+npm run version:check
+
+git tag v$(cat VERSION)
+git push origin v$(cat VERSION)
+```
+
 ## Commands
 
 From the repo root:
 
 ```bash
-# Publish artifacts from the latest successful Package workflow run
-npm run release -- --from-latest
-
-# Publish artifacts from the Package workflow run for a tag
-npm run release -- --from-tag v0.0.1
-npm run release:vscode -- --from-tag v0.0.1
-npm run release:rider -- --from-tag v0.0.1
+# Publish artifacts from the Package workflow run for the repo version tag
+npm run release -- --from-tag v$(cat VERSION)
+npm run release:vscode -- --from-tag v$(cat VERSION)
+npm run release:rider -- --from-tag v$(cat VERSION)
 
 # Validate artifact download without uploading
-npm run release -- --from-tag v0.0.1 --dry-run
+npm run release -- --from-tag v$(cat VERSION) --dry-run
 
-# Debug escape hatch: publish artifacts from a specific GitHub Actions run id
+# Debug escape hatch: publish latest artifacts or artifacts from a specific GitHub Actions run id
+npm run release -- --from-latest
 npm run release -- --from-run <run-id>
 
 # Local build and publish
@@ -70,8 +81,8 @@ Useful for CI without committing tokens to disk.
 |------|--------|
 | `--dry-run` | Build/package only, or with artifact options: download and validate artifacts without uploading. |
 | `--skip-build` | Skip dependency install / compile / build phases for local publishing. |
-| `--from-latest` | Find the latest successful `Package` workflow run and publish its artifacts locally. |
-| `--from-tag <tag>` | Find the latest successful `Package` workflow run for a tag and publish its artifacts locally. |
+| `--from-latest` | Find the latest successful `Package` workflow run and publish its artifacts locally. Debug shortcut; prefer `--from-tag` for releases. |
+| `--from-tag <tag>` | Find the latest successful `Package` workflow run for a tag and publish its artifacts locally. The tag must match `VERSION`. |
 | `--from-run <run-id>` | Download artifacts from a specific GitHub Actions run id. Useful for debugging. |
 
 ## How it maps to existing tooling
