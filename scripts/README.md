@@ -13,7 +13,7 @@ Cross-platform Node.js publisher for `vscode-peer` and `rider-peer`.
 2. Get tokens:
    - **JetBrains Marketplace** (`rider.token`): https://plugins.jetbrains.com/author/me/tokens
    - **VS Code Marketplace** (`vscode.pat`, optional): Azure DevOps PAT with `Marketplace > Manage` scope.
-     If `vscode.pat` / `VSCE_PAT` is not configured, the tool uses local `vsce` login for the package publisher and runs `vsce login` interactively when needed.
+     If `vscode.pat` / `VSCE_PAT` is not configured, VS Code Marketplace publishing is skipped.
 
    `release.config.json` is gitignored.
 
@@ -59,7 +59,7 @@ node scripts/release.mjs rider --dry-run
 
 These env vars take precedence over `release.config.json`:
 
-- `VSCE_PAT` — optional VS Code Marketplace PAT; if missing, local `vsce` login is used
+- `VSCE_PAT` — optional VS Code Marketplace PAT; if missing, VS Code Marketplace publishing is skipped
 - `JETBRAINS_PUBLISH_TOKEN` — JetBrains Marketplace token
 
 Useful for CI without committing tokens to disk.
@@ -76,7 +76,7 @@ Useful for CI without committing tokens to disk.
 
 ## How it maps to existing tooling
 
-- vscode-peer local build: `npx @vscode/vsce publish` with `--pat <token>` when configured, otherwise local `vsce` login (cwd = `vscode-peer/`)
-- vscode-peer from Actions artifact: `npx @vscode/vsce publish --packagePath <downloaded.vsix>` with `--pat <token>` when configured, otherwise local `vsce` login
+- vscode-peer local build: `npx @vscode/vsce publish --pat <token>` when configured; skipped when no VS Code PAT is configured (cwd = `vscode-peer/`)
+- vscode-peer from Actions artifact: `npx @vscode/vsce publish --packagePath <downloaded.vsix> --pat <token>` when configured; skipped when no VS Code PAT is configured
 - rider-peer local build: `gradle publishPlugin` with `JETBRAINS_PUBLISH_TOKEN` injected.
 - rider-peer from Actions artifact: upload the downloaded `.zip` to JetBrains Marketplace Upload API using `xmlId` from `rider-peer/src/main/resources/META-INF/plugin.xml`.

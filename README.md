@@ -227,7 +227,7 @@ npm run release:vscode -- --from-tag v0.0.1
 npm run release:rider -- --from-tag v0.0.1
 ```
 
-The release tool finds the matching successful `Package` workflow run, downloads the selected artifacts into `.release-artifacts/`, and publishes them locally. JetBrains still needs `JETBRAINS_PUBLISH_TOKEN` or `release.config.json`. VS Code uses `VSCE_PAT` when configured; otherwise the tool checks local `vsce` login for the package publisher and runs `vsce login` if needed.
+The release tool finds the matching successful `Package` workflow run, downloads the selected artifacts into `.release-artifacts/`, and publishes them locally. JetBrains still needs `JETBRAINS_PUBLISH_TOKEN` or `release.config.json`. VS Code uses `VSCE_PAT` when configured; otherwise VS Code Marketplace publishing is skipped.
 
 ### Local build and release
 
@@ -235,7 +235,7 @@ The release tool finds the matching successful `Package` workflow run, downloads
 # 1. Configure tokens (gitignored)
 cp release.config.example.json release.config.json
 # edit release.config.json and fill in rider.token
-# optional: fill in vscode.pat, or let the tool use local vsce login
+# optional: fill in vscode.pat; VS Code publishing is skipped without it
 
 # 2. Publish from local build
 npm run release            # both
