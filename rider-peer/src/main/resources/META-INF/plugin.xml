@@ -2,7 +2,21 @@
     <id>com.editorpeerbridge.bridge</id>
     <name>Editor Peer Bridge</name>
     <vendor email="shichao402@gmail.com" url="https://github.com/shichao402/editor-peer-bridge">shichao402</vendor>
-    <description><![CDATA[Cross-editor code navigation tool. Jump between Rider, VSCode, Cursor, and CodeBuddy with a single keystroke.]]></description>
+    <description><![CDATA[
+        <p>Editor Peer Bridge is a local cross-editor navigation bridge for Rider, VS Code, Cursor, and CodeBuddy.</p>
+        <p>Use one action to send the current file and selection to a matching peer editor in the same workspace. The plugin supports multi-target routing, an "All" broadcast option, automatic project configuration, Rider solution detection, and multiple editor instances.</p>
+        <p>Communication stays on localhost; file paths and selections are not uploaded to external services.</p>
+    ]]></description>
+
+    <change-notes><![CDATA[
+        <h3>0.0.4</h3>
+        <ul>
+            <li>Added JetBrains Marketplace publishing support and repeatable package artifacts.</li>
+            <li>Added Rider .sln / .slnx auto-detection for better multi-solution routing.</li>
+            <li>Improved marketplace metadata, plugin ID metadata, and release version synchronization.</li>
+            <li>Redacted marketplace tokens in release logs.</li>
+        </ul>
+    ]]></change-notes>
 
     <depends>com.intellij.modules.rider</depends>
 

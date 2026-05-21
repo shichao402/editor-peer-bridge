@@ -1,7 +1,7 @@
 {
   "name": "editor-peer-bridge-vscode-peer",
   "displayName": "Editor Peer Bridge",
-  "description": "Peer-to-peer jump bridge for VSCode and Cursor.",
+  "description": "Local cross-editor jump bridge for Rider, VS Code, Cursor, and CodeBuddy.",
   "version": "0.0.4",
   "publisher": "shichao402",
   "license": "MIT",
