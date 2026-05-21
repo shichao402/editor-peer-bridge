@@ -25,6 +25,7 @@ const REPO_ROOT = resolve(__dirname, '..');
 const CONFIG_PATH = resolve(REPO_ROOT, 'release.config.json');
 const EXAMPLE_PATH = resolve(REPO_ROOT, 'release.config.example.json');
 const ARTIFACTS_ROOT = resolve(REPO_ROOT, '.release-artifacts');
+const VSCODE_PACKAGE_JSON = resolve(REPO_ROOT, 'vscode-peer/package.json');
 const RIDER_PLUGIN_XML = resolve(REPO_ROOT, 'rider-peer/src/main/resources/META-INF/plugin.xml');
 const JETBRAINS_UPLOAD_URL = 'https://plugins.jetbrains.com/api/updates/upload';
 const ARTIFACTS = {
@@ -122,8 +123,8 @@ Options:
   -h, --help             Show this help
 
 Tokens are read from release.config.json (gitignored) or environment
-variables VSCE_PAT / JETBRAINS_PUBLISH_TOKEN. Copy
-release.config.example.json to release.config.json and fill in tokens.
+variables VSCE_PAT / JETBRAINS_PUBLISH_TOKEN. VS Code can also publish
+with the local vsce login for the package publisher.
 
 When using --from-latest, --from-tag, or --from-run, the GitHub CLI (gh) must be installed and authenticated.`);
 }
@@ -336,6 +337,35 @@ async function downloadArtifactsFromRun(runId, targets) {
 
 // --- Targets ---------------------------------------------------------------
 
+function readVscodePublisher() {
+    const pkg = JSON.parse(readFileSync(VSCODE_PACKAGE_JSON, 'utf8'));
+    if (!pkg.publisher) throw new Error(`Missing publisher in ${VSCODE_PACKAGE_JSON}`);
+    return pkg.publisher;
+}
+
+async function ensureVscodeLogin(publisher, cwd) {
+    const output = await runCapture('vscode: list logged-in publishers', 'npx', ['--yes', '@vscode/vsce', 'ls-publishers'], { cwd });
+    const publishers = output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    if (publishers.includes(publisher)) {
+        console.log(`[release] vscode: using existing vsce login for publisher ${publisher}`);
+        return;
+    }
+
+    console.log(`[release] vscode: VSCE_PAT not configured; logging in publisher ${publisher}`);
+    await runStep('vscode: login publisher', 'npx', ['--yes', '@vscode/vsce', 'login', publisher], { cwd });
+}
+
+async function buildVscodePublishArgs({ pat, packagePath, cwd }) {
+    const args = ['--yes', '@vscode/vsce', 'publish'];
+    if (packagePath) args.push('--packagePath', packagePath);
+    if (pat) {
+        args.push('--pat', pat);
+    } else {
+        await ensureVscodeLogin(readVscodePublisher(), cwd);
+    }
+    return args;
+}
+
 async function publishVscode({ pat, dryRun, skipBuild, packagePath }) {
     const cwd = resolve(REPO_ROOT, 'vscode-peer');
 
@@ -348,7 +378,7 @@ async function publishVscode({ pat, dryRun, skipBuild, packagePath }) {
         await runStep(
             'vscode: publish artifact to Marketplace',
             'npx',
-            ['--yes', '@vscode/vsce', 'publish', '--packagePath', packagePath, '--pat', pat],
+            await buildVscodePublishArgs({ pat, packagePath, cwd }),
             { cwd }
         );
         return;
@@ -372,7 +402,7 @@ async function publishVscode({ pat, dryRun, skipBuild, packagePath }) {
         await runStep(
             'vscode: publish to Marketplace',
             'npx',
-            ['--yes', '@vscode/vsce', 'publish', '--pat', pat],
+            await buildVscodePublishArgs({ pat, cwd }),
             { cwd }
         );
     }
@@ -452,9 +482,6 @@ async function main() {
     const config = loadConfig();
     const { vscePat, jbToken } = resolveTokens(config);
 
-    if (args.targets.includes('vscode') && !args.dryRun) {
-        requireToken(vscePat, 'VSCE_PAT', 'vscode');
-    }
     if (args.targets.includes('rider') && !args.dryRun) {
         requireToken(jbToken, 'JETBRAINS_PUBLISH_TOKEN', 'rider');
     }
