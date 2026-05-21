@@ -20,17 +20,30 @@ Cross-platform Node.js publisher for `vscode-peer` and `rider-peer`.
 3. Make sure these are on your PATH:
    - `node` (>= 18)
    - `npm` / `npx`
-   - `gradle` (8.x; compatible with the current IntelliJ Gradle plugin)
+   - `gh` authenticated with access to the repository, when publishing from GitHub Actions artifacts
+   - `gradle` (8.x; only needed for local Rider builds)
 
 ## Commands
 
 From the repo root:
 
 ```bash
-# Both editors
-npm run release
+# Publish artifacts from the latest successful Package workflow run
+npm run release -- --from-latest
 
-# One at a time
+# Publish artifacts from the Package workflow run for a tag
+npm run release -- --from-tag v0.0.1
+npm run release:vscode -- --from-tag v0.0.1
+npm run release:rider -- --from-tag v0.0.1
+
+# Validate artifact download without uploading
+npm run release -- --from-tag v0.0.1 --dry-run
+
+# Debug escape hatch: publish artifacts from a specific GitHub Actions run id
+npm run release -- --from-run <run-id>
+
+# Local build and publish
+npm run release
 npm run release:vscode
 npm run release:rider
 
@@ -55,10 +68,15 @@ Useful for CI without committing tokens to disk.
 
 | Flag | Effect |
 |------|--------|
-| `--dry-run` | vscode: `vsce package`; rider: `gradle buildPlugin`. No upload. |
-| `--skip-build` | Skip `npm install` / `npm run compile`; reuse existing artifacts. |
+| `--dry-run` | Build/package only, or with artifact options: download and validate artifacts without uploading. |
+| `--skip-build` | Skip dependency install / compile / build phases for local publishing. |
+| `--from-latest` | Find the latest successful `Package` workflow run and publish its artifacts locally. |
+| `--from-tag <tag>` | Find the latest successful `Package` workflow run for a tag and publish its artifacts locally. |
+| `--from-run <run-id>` | Download artifacts from a specific GitHub Actions run id. Useful for debugging. |
 
 ## How it maps to existing tooling
 
-- vscode-peer: `npx @vscode/vsce publish --pat <token>` (cwd = `vscode-peer/`)
-- rider-peer: `gradle publishPlugin` with `JETBRAINS_PUBLISH_TOKEN` injected — consumed by `rider-peer/build.gradle.kts:43` (`publishing.token = providers.environmentVariable("JETBRAINS_PUBLISH_TOKEN")`).
+- vscode-peer local build: `npx @vscode/vsce publish --pat <token>` (cwd = `vscode-peer/`)
+- vscode-peer from Actions artifact: `npx @vscode/vsce publish --packagePath <downloaded.vsix> --pat <token>`
+- rider-peer local build: `gradle publishPlugin` with `JETBRAINS_PUBLISH_TOKEN` injected.
+- rider-peer from Actions artifact: upload the downloaded `.zip` to JetBrains Marketplace Upload API using `xmlId` from `rider-peer/src/main/resources/META-INF/plugin.xml`.

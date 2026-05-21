@@ -13,6 +13,7 @@ rider-peer/.idea/
 
 # Release tooling
 release.config.json
+.release-artifacts/
 node_modules/
 
 # OS

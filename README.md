@@ -200,21 +200,34 @@ git push origin v0.0.1
 
 You can also run the `Package` workflow manually from GitHub Actions.
 
-Download these artifacts from the workflow run before publishing locally:
+The workflow uploads these artifacts for 30 days:
 
 - `vscode-peer-vsix` — VS Code `.vsix` package
 - `rider-peer-plugin` — Rider plugin `.zip` package
 
 ### Local release from Actions artifacts
 
-Publish the downloaded VS Code package:
+Install and authenticate the GitHub CLI, then publish artifacts from the latest successful packaging run:
 
 ```bash
-npx @vscode/vsce login shichao402
-npx @vscode/vsce publish --packagePath path/to/editor-peer-bridge-vscode-peer-*.vsix
+gh auth login
+npm run release -- --from-latest
 ```
 
-Publish the downloaded Rider package by uploading the `.zip` file in JetBrains Marketplace.
+For a specific release tag, use the tag name instead of looking up the GitHub Actions run id:
+
+```bash
+npm run release -- --from-tag v0.0.1
+```
+
+Target one marketplace if needed:
+
+```bash
+npm run release:vscode -- --from-tag v0.0.1
+npm run release:rider -- --from-tag v0.0.1
+```
+
+The release tool finds the matching successful `Package` workflow run, downloads the selected artifacts into `.release-artifacts/`, and publishes them locally. Marketplace tokens are still read from `VSCE_PAT` / `JETBRAINS_PUBLISH_TOKEN` or `release.config.json`.
 
 ### Local build and release
 
