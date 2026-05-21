@@ -4,11 +4,24 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.0.5] - 2026-05-21
+
+### Added
+
+- Marketplace-facing README and changelog for VS Code Marketplace and Open VSX Registry.
+- Expanded JetBrains Marketplace plugin description and release notes.
+- Open VSX release target in the shared release tooling.
+
+### Changed
+
+- VS Code extension short description now lists Rider, VS Code, Cursor, and CodeBuddy support.
+- Release documentation now describes all three publication channels more clearly.
+
 ## [0.0.4] - 2026-05-21
 
 ### Added
 
-- Publish targets for all supported channels: VS Code Marketplace, Open VSX Registry, and JetBrains Marketplace.
+- Publish targets for VS Code Marketplace and JetBrains Marketplace.
 - Package-only GitHub Actions workflow for repeatable VSIX and Rider ZIP artifacts.
 - Release tooling that can publish from a version tag, the latest successful package run, or a specific workflow run.
 - Rider and VS Code/Cursor/CodeBuddy support for `.sln` auto-detection, making multi-solution workspaces easier to route.

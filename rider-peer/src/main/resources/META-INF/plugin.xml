@@ -9,12 +9,11 @@
     ]]></description>
 
     <change-notes><![CDATA[
-        <h3>0.0.4</h3>
+        <h3>0.0.5</h3>
         <ul>
-            <li>Added JetBrains Marketplace publishing support and repeatable package artifacts.</li>
-            <li>Added Rider .sln / .slnx auto-detection for better multi-solution routing.</li>
-            <li>Improved marketplace metadata, plugin ID metadata, and release version synchronization.</li>
-            <li>Redacted marketplace tokens in release logs.</li>
+            <li>Expanded the JetBrains Marketplace plugin description with features, routing behavior, and privacy notes.</li>
+            <li>Added clearer release notes for the Rider plugin package.</li>
+            <li>Updated release tooling documentation for all three publication channels.</li>
         </ul>
     ]]></change-notes>
 
