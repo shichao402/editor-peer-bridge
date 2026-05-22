@@ -9,6 +9,15 @@ const CONFIG_FILE_NAME = '.editor-peer-bridge.json'
 const PORT_RANGE_START = 47631
 const PORT_RANGE_END = 47700
 
+export type EnsureConfigStatus = 'created' | 'updated' | 'unchanged' | 'skipped'
+
+export interface EnsureConfigResult {
+  status: EnsureConfigStatus
+  configPath?: string
+  peerId?: string
+  changes: string[]
+}
+
 async function detectSolutionName(workspaceRoot: string): Promise<string | undefined> {
   try {
     const entries = await fs.readdir(workspaceRoot)
@@ -95,6 +104,12 @@ export function getPrimaryWorkspaceRoot(): string | undefined {
   return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
 }
 
+export async function getBridgeConfigPath(): Promise<string | undefined> {
+  const workspaceRoot = getPrimaryWorkspaceRoot()
+  if (!workspaceRoot) return undefined
+  return findConfigPath(workspaceRoot)
+}
+
 async function findConfigPath(startDirectory: string): Promise<string | undefined> {
   let currentDirectory = path.resolve(startDirectory)
 
@@ -118,9 +133,11 @@ async function findConfigPath(startDirectory: string): Promise<string | undefine
 
 // ── Auto-config: ensure config exists and self is registered ──
 
-export async function ensureConfig(): Promise<void> {
+export async function ensureConfig(): Promise<EnsureConfigResult> {
   const workspaceRoot = getPrimaryWorkspaceRoot()
-  if (!workspaceRoot) return
+  if (!workspaceRoot) {
+    return { status: 'skipped', changes: ['No workspace folder is open.'] }
+  }
 
   const editorKind = detectEditorKind()
   const explicitPeerId = process.env.EDITOR_PEER_BRIDGE_PEER_ID
@@ -128,10 +145,10 @@ export async function ensureConfig(): Promise<void> {
   const existingPath = await findConfigPath(workspaceRoot)
 
   if (existingPath) {
-    await ensureSelfInConfig(existingPath, editorKind, workspaceRoot, explicitPeerId, solutionName)
-  } else {
-    await createInitialConfig(workspaceRoot, editorKind, solutionName)
+    return ensureSelfInConfig(existingPath, editorKind, workspaceRoot, explicitPeerId, solutionName)
   }
+
+  return createInitialConfig(workspaceRoot, editorKind, explicitPeerId, solutionName)
 }
 
 async function ensureSelfInConfig(
@@ -140,61 +157,109 @@ async function ensureSelfInConfig(
   workspaceRoot: string,
   explicitPeerId: string | undefined,
   solutionName: string | undefined
-): Promise<void> {
+): Promise<EnsureConfigResult> {
   const raw = JSON.parse(await fs.readFile(configPath, 'utf8')) as RawBridgeConfig
   const entries = Object.values(raw.peers)
-
+  const changes: string[] = []
   const projectType = solutionName ?? 'all'
+  const self = findSelfPeer(entries, editorKind, explicitPeerId, projectType)
 
-  // Check if self already exists
+  if (!self) {
+    const usedPorts = new Set(entries.map((p) => p.port))
+    const port = await findAvailablePort(usedPorts)
+    const peerId = explicitPeerId ?? generatePeerId(editorKind, entries)
+    const instanceName = solutionName
+      ? `${capitalize(editorKind)} (${solutionName})`
+      : generateInstanceName(editorKind, entries)
+
+    const newPeer: PeerEntry = {
+      peerId,
+      editorKind,
+      instanceName,
+      port,
+      workspaceRoots: [workspaceRoot],
+      supportedProjectTypes: [projectType],
+      projectType
+    }
+
+    raw.peers[peerId] = newPeer
+    changes.push(`Added peer ${peerId}.`)
+    ensureProjectType(raw, projectType, changes)
+    await fs.writeFile(configPath, JSON.stringify(raw, null, 2) + '\n', 'utf8')
+
+    return { status: 'updated', configPath, peerId, changes }
+  }
+
+  if (!self.workspaceRoots.includes(workspaceRoot)) {
+    self.workspaceRoots = [...self.workspaceRoots, workspaceRoot]
+    changes.push(`Added workspace root ${workspaceRoot}.`)
+  }
+
+  if (!self.supportedProjectTypes.includes(projectType)) {
+    self.supportedProjectTypes = [...self.supportedProjectTypes, projectType]
+    changes.push(`Added supported project type ${projectType}.`)
+  }
+
+  if (self.projectType !== projectType) {
+    self.projectType = projectType
+    changes.push(`Updated project type to ${projectType}.`)
+  }
+
+  ensureProjectType(raw, projectType, changes)
+
+  if (changes.length > 0) {
+    await fs.writeFile(configPath, JSON.stringify(raw, null, 2) + '\n', 'utf8')
+    return { status: 'updated', configPath, peerId: self.peerId, changes }
+  }
+
+  return { status: 'unchanged', configPath, peerId: self.peerId, changes }
+}
+
+function findSelfPeer(
+  entries: PeerEntry[],
+  editorKind: EditorKind,
+  explicitPeerId: string | undefined,
+  projectType: string
+): PeerEntry | undefined {
   if (explicitPeerId) {
-    if (entries.some((p) => p.peerId === explicitPeerId)) return
-  } else if (solutionName) {
-    // Match by editorKind + projectType (allows multiple instances with different slns)
-    if (entries.some((p) => p.editorKind === editorKind && p.projectType === projectType)) return
-  } else {
-    if (entries.some((p) => p.editorKind === editorKind)) return
+    return entries.find((p) => p.peerId === explicitPeerId)
   }
 
-  // Self not found - register
-  const usedPorts = new Set(entries.map((p) => p.port))
-  const port = await findAvailablePort(usedPorts)
-  const peerId = generatePeerId(editorKind, entries)
-  const instanceName = solutionName
-    ? `${capitalize(editorKind)} (${solutionName})`
-    : generateInstanceName(editorKind, entries)
+  return entries.find((p) => p.editorKind === editorKind && p.projectType === projectType) ??
+    entries.find((p) => p.editorKind === editorKind)
+}
 
-  const newPeer: PeerEntry = {
-    peerId,
-    editorKind,
-    instanceName,
-    port,
-    workspaceRoots: [workspaceRoot],
-    supportedProjectTypes: [projectType],
-    projectType
+function ensureProjectType(raw: RawBridgeConfig, projectType: string, changes: string[]): void {
+  if (!raw.typeHierarchy) {
+    raw.typeHierarchy = { all: [] }
+    changes.push('Created type hierarchy.')
   }
 
-  raw.peers[peerId] = newPeer
+  if (!raw.typeHierarchy.all) {
+    raw.typeHierarchy.all = []
+    changes.push('Added root type hierarchy entry.')
+  }
 
-  // Ensure projectType exists in typeHierarchy
   if (projectType !== 'all' && !raw.typeHierarchy[projectType]) {
     raw.typeHierarchy[projectType] = []
-    if (raw.typeHierarchy['all'] && !raw.typeHierarchy['all'].includes(projectType)) {
-      raw.typeHierarchy['all'] = [...raw.typeHierarchy['all'], projectType]
-    }
+    changes.push(`Added type hierarchy entry ${projectType}.`)
   }
 
-  await fs.writeFile(configPath, JSON.stringify(raw, null, 2) + '\n', 'utf8')
+  if (projectType !== 'all' && !raw.typeHierarchy.all.includes(projectType)) {
+    raw.typeHierarchy.all = [...raw.typeHierarchy.all, projectType]
+    changes.push(`Linked ${projectType} under all.`)
+  }
 }
 
 async function createInitialConfig(
   workspaceRoot: string,
   editorKind: EditorKind,
+  explicitPeerId: string | undefined,
   solutionName: string | undefined
-): Promise<void> {
+): Promise<EnsureConfigResult> {
   const port = await findAvailablePort(new Set())
   const projectType = solutionName ?? 'all'
-  const peerId = `${editorKind}-01`
+  const peerId = explicitPeerId ?? `${editorKind}-01`
   const instanceName = solutionName
     ? `${capitalize(editorKind)} (${solutionName})`
     : `${capitalize(editorKind)} 01`
@@ -222,6 +287,8 @@ async function createInitialConfig(
 
   const configPath = path.join(workspaceRoot, CONFIG_FILE_NAME)
   await fs.writeFile(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8')
+
+  return { status: 'created', configPath, peerId, changes: [`Created config with peer ${peerId}.`] }
 }
 
 function generatePeerId(editorKind: EditorKind, existingPeers: PeerEntry[]): string {
