@@ -137,6 +137,73 @@ class PeerBridgeService(private val project: Project) : Disposable {
         activePort = null
     }
 
+    @Synchronized
+    fun createOrUpdateConfig(showNotification: Boolean = true) {
+        try {
+            val basePath = project.basePath ?: run {
+                notify("Project base path not found.", NotificationType.WARNING)
+                return
+            }
+            val existingFile = findConfigFile(basePath)
+            val before = existingFile?.takeIf { it.exists() }?.readText()
+
+            ensureConfig()
+            cachedConfig = null
+            configCacheTime = 0
+            startServer()
+
+            if (!showNotification) return
+
+            val configFile = findConfigFile(basePath) ?: run {
+                notify("Config not found: .editor-peer-bridge.json", NotificationType.WARNING)
+                return
+            }
+            val after = configFile.readText()
+            val message = when {
+                existingFile == null -> "Editor Peer Bridge: created config."
+                before != after -> "Editor Peer Bridge: updated config."
+                else -> "Editor Peer Bridge: config is already up to date."
+            }
+            notify(message, NotificationType.INFORMATION)
+        } catch (error: Exception) {
+            notify("Config update failed: ${error.message ?: "Unexpected error."}", NotificationType.ERROR)
+        }
+    }
+
+    fun openConfig() {
+        try {
+            val basePath = project.basePath ?: run {
+                notify("Project base path not found.", NotificationType.WARNING)
+                return
+            }
+            var configFile = findConfigFile(basePath)
+            if (configFile == null) {
+                createOrUpdateConfig(showNotification = false)
+                configFile = findConfigFile(basePath)
+            }
+
+            if (configFile == null) {
+                notify("Config not found: .editor-peer-bridge.json", NotificationType.WARNING)
+                return
+            }
+
+            openConfigFile(configFile)
+        } catch (error: Exception) {
+            notify("Open config failed: ${error.message ?: "Unexpected error."}", NotificationType.ERROR)
+        }
+    }
+
+    private fun openConfigFile(configFile: File) {
+        val normalizedPath = configFile.absolutePath.replace('\\', '/')
+        ApplicationManager.getApplication().invokeLater {
+            val virtualFile = LocalFileSystem.getInstance().refreshAndFindFileByPath(normalizedPath) ?: run {
+                notify("Config file not found: $normalizedPath", NotificationType.WARNING)
+                return@invokeLater
+            }
+            FileEditorManager.getInstance(project).openTextEditor(OpenFileDescriptor(project, virtualFile), true)
+        }
+    }
+
     fun jumpToPeer(editor: Editor, file: VirtualFile) {
         try {
             val config = loadConfigOrNull() ?: run {

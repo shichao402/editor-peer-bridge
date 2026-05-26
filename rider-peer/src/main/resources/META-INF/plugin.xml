@@ -9,11 +9,9 @@
     ]]></description>
 
     <change-notes><![CDATA[
-        <h3>0.0.5</h3>
+        <h3>0.0.11</h3>
         <ul>
-            <li>Expanded the JetBrains Marketplace plugin description with features, routing behavior, and privacy notes.</li>
-            <li>Added clearer release notes for the Rider plugin package.</li>
-            <li>Updated release tooling documentation for all three publication channels.</li>
+            <li>Added Rider actions to create, update, and open the Editor Peer Bridge config from Find Action.</li>
         </ul>
     ]]></change-notes>
 
@@ -32,5 +30,17 @@
                 description="Send current file and selection to a matching peer instance">
             <keyboard-shortcut first-keystroke="ctrl alt shift J" keymap="$default"/>
         </action>
+        <action id="EditorPeerBridge.CreateConfig"
+                class="com.editorpeerbridge.CreateConfigAction"
+                text="Editor Peer Bridge: Create Config"
+                description="Create the Editor Peer Bridge config file"/>
+        <action id="EditorPeerBridge.UpdateConfig"
+                class="com.editorpeerbridge.UpdateConfigAction"
+                text="Editor Peer Bridge: Update Config"
+                description="Update the Editor Peer Bridge config file"/>
+        <action id="EditorPeerBridge.OpenConfig"
+                class="com.editorpeerbridge.OpenConfigAction"
+                text="Editor Peer Bridge: Open Config"
+                description="Open the Editor Peer Bridge config file"/>
     </actions>
 </idea-plugin>

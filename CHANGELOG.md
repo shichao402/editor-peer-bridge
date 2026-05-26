@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.0.11] - 2026-05-26
+
+### Added
+
+- Rider actions to create, update, and open the Editor Peer Bridge config from Find Action.
+
 ## [0.0.10] - 2026-05-26
 
 ### Added
