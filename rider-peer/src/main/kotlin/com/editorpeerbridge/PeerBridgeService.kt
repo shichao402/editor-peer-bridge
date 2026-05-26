@@ -5,7 +5,7 @@ import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.Disposable
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.ScrollType
@@ -15,6 +15,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.openapi.util.Computable
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import java.io.File
@@ -143,9 +144,9 @@ class PeerBridgeService(private val project: Project) : Disposable {
                 return
             }
 
-            val request = ReadAction.compute<OpenLocationRequest, RuntimeException> {
+            val request = ApplicationManager.getApplication().runReadAction(Computable {
                 buildOpenLocationRequest(config, editor, file)
-            }
+            })
             val candidates = resolveTargetPeers(config, request)
 
             if (candidates.isEmpty()) {
