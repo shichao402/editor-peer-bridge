@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.0.10] - 2026-05-26
+
+### Added
+
+- Gradle wrapper for the Rider peer plugin project.
+
+### Fixed
+
+- Replaced deprecated Rider `ReadAction.compute(ThrowableComputable)` usage to maintain compatibility with newer IntelliJ Platform APIs.
+
 ## [0.0.5] - 2026-05-21
 
 ### Added
