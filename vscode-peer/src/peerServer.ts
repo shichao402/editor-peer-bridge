@@ -370,12 +370,37 @@ function checkFileSize(filePath: string): string | undefined {
 }
 
 async function openInVsCode(request: OpenLocationRequest): Promise<void> {
-  const document = await vscode.workspace.openTextDocument(vscode.Uri.file(request.document.filePath))
+  const uri = vscode.Uri.file(request.document.filePath)
+
+  let document: vscode.TextDocument
+  try {
+    document = await vscode.workspace.openTextDocument(uri)
+  } catch (err) {
+    // Workaround for Cursor bug: file model may be internally marked as skipLSPSync
+    // (e.g. by AI indexing), causing a misleading "Files above 50MB cannot be
+    // synchronized with extensions" error even for small files.
+    // Fallback: open via the editor command which bypasses extension host document sync.
+    if (err instanceof Error && err.message.includes('50MB')) {
+      await vscode.commands.executeCommand('vscode.open', uri, {
+        preview: false,
+        preserveFocus: !request.options.activateWindow
+      })
+      // After vscode.open, grab the active editor to apply selection
+      await applySelectionToActiveEditor(request)
+      return
+    }
+    throw err
+  }
+
   const editor = await vscode.window.showTextDocument(document, {
     preview: false,
     preserveFocus: !request.options.activateWindow
   })
 
+  applySelection(editor, request)
+}
+
+function applySelection(editor: vscode.TextEditor, request: OpenLocationRequest): void {
   const selection = new vscode.Selection(
     request.document.selection.start.line - 1,
     request.document.selection.start.column - 1,
@@ -388,4 +413,13 @@ async function openInVsCode(request: OpenLocationRequest): Promise<void> {
     ? vscode.TextEditorRevealType.InCenter
     : vscode.TextEditorRevealType.Default
   editor.revealRange(selection, revealType)
+}
+
+async function applySelectionToActiveEditor(request: OpenLocationRequest): Promise<void> {
+  // Small delay to let the editor open and become active
+  await new Promise(resolve => setTimeout(resolve, 100))
+  const editor = vscode.window.activeTextEditor
+  if (editor && editor.document.uri.fsPath === request.document.filePath) {
+    applySelection(editor, request)
+  }
 }
