@@ -57,6 +57,11 @@ export interface PeerEntry {
   projectType: string
 }
 
+export interface BridgeUiConfig {
+  /** Show the status bar indicator. Defaults to true when the field is absent. */
+  statusBar?: boolean
+}
+
 export interface RawBridgeConfig {
   peers: Record<string, PeerEntry>
   typeHierarchy: Record<string, string[]>
@@ -64,6 +69,7 @@ export interface RawBridgeConfig {
     defaultTargetPeerIds?: Partial<Record<EditorKind, string>>
     requestTimeoutMs?: number
   }
+  ui?: BridgeUiConfig
 }
 
 export interface BridgeConfig {
@@ -74,6 +80,7 @@ export interface BridgeConfig {
     defaultTargetPeerIds?: Partial<Record<EditorKind, string>>
     requestTimeoutMs?: number
   }
+  ui?: BridgeUiConfig
 }
 
 export type PeerConfig = PeerEntry

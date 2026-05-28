@@ -1,11 +1,11 @@
 import * as vscode from 'vscode'
-import { ensureConfig, EnsureConfigResult, getBridgeConfigPath } from './config'
+import { BridgeController, getBridgeConfigPath } from './bridgeController'
 import { jumpToPeer } from './peerClient'
-import { PeerServer } from './peerServer'
+import { StatusBarController } from './statusBar'
 
-let server: PeerServer | undefined
+let controller: BridgeController | undefined
 
-const CREATE_OR_UPDATE_CONFIG = 'Create/Update Config'
+const RELOAD_CONFIG = 'Reload Config'
 const CREATE_CONFIG = 'Create Config'
 const OPEN_CONFIG = 'Open Config'
 const SHOW_OUTPUT = 'Show Output'
@@ -14,7 +14,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const output = vscode.window.createOutputChannel('Editor Peer Bridge')
   context.subscriptions.push(output)
 
-  server = new PeerServer(output)
+  controller = new BridgeController(output)
+  const statusBar = new StatusBarController()
+  context.subscriptions.push({
+    dispose: () => {
+      statusBar.dispose()
+      void controller?.dispose()
+      controller = undefined
+    }
+  })
+
+  context.subscriptions.push(
+    controller.onDidReconcile((outcome) => statusBar.update(outcome))
+  )
 
   context.subscriptions.push(
     vscode.commands.registerCommand('editorPeerBridge.jumpToPeer', async () => {
@@ -38,7 +50,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   )
 
   try {
-    await startBridge(output)
+    const outcome = await controller.reconcile()
+    if (outcome.error) {
+      throw outcome.error
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     output.appendLine(`[activate] ${message}`)
@@ -46,24 +61,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   }
 }
 
-async function startBridge(output: vscode.OutputChannel): Promise<EnsureConfigResult> {
-  const result = await ensureConfig()
-  output.appendLine(`[config] ${result.status}${result.configPath ? `: ${result.configPath}` : ''}`)
-  for (const change of result.changes) {
-    output.appendLine(`[config] ${change}`)
-  }
-
-  if (result.status !== 'skipped') {
-    await server?.start()
-  }
-
-  return result
-}
-
 async function runConfigCommand(output: vscode.OutputChannel): Promise<void> {
+  if (!controller) {
+    return
+  }
+
   try {
-    const result = await startBridge(output)
-    const message = formatConfigResultMessage(result)
+    const outcome = await controller.reconcile()
+    if (outcome.error) {
+      throw outcome.error
+    }
+
+    const message = formatConfigOutcomeMessage(outcome)
     const action = await vscode.window.showInformationMessage(message, OPEN_CONFIG)
     if (action === OPEN_CONFIG) {
       await openConfigDocument(output)
@@ -75,16 +84,24 @@ async function runConfigCommand(output: vscode.OutputChannel): Promise<void> {
   }
 }
 
-function formatConfigResultMessage(result: EnsureConfigResult): string {
-  switch (result.status) {
+function formatConfigOutcomeMessage(outcome: { configResult: { status: string; changes: string[] }; activePort?: number; portReassigned: boolean }): string {
+  const portSuffix = outcome.activePort
+    ? outcome.portReassigned
+      ? ` Server is listening on port ${outcome.activePort} (reassigned).`
+      : ` Server is listening on port ${outcome.activePort}.`
+    : ''
+
+  switch (outcome.configResult.status) {
     case 'created':
-      return 'Editor Peer Bridge: created config.'
+      return `Editor Peer Bridge: created config.${portSuffix}`
     case 'updated':
-      return 'Editor Peer Bridge: updated config.'
+      return `Editor Peer Bridge: updated config.${portSuffix}`
     case 'unchanged':
-      return 'Editor Peer Bridge: config is already up to date.'
+      return `Editor Peer Bridge: config is already up to date.${portSuffix}`
     case 'skipped':
-      return `Editor Peer Bridge: ${result.changes[0] ?? 'config skipped.'}`
+      return `Editor Peer Bridge: ${outcome.configResult.changes[0] ?? 'config skipped.'}`
+    default:
+      return `Editor Peer Bridge: reconciled.${portSuffix}`
   }
 }
 
@@ -92,10 +109,10 @@ async function openConfigDocument(output: vscode.OutputChannel): Promise<void> {
   const configPath = await getBridgeConfigPath()
   if (!configPath) {
     const action = await vscode.window.showWarningMessage('Editor Peer Bridge: config not found.', CREATE_CONFIG)
-    if (action === CREATE_CONFIG) {
-      const result = await startBridge(output)
-      if (result.configPath) {
-        await openPath(result.configPath)
+    if (action === CREATE_CONFIG && controller) {
+      const outcome = await controller.reconcile()
+      if (outcome.configResult.configPath) {
+        await openPath(outcome.configResult.configPath)
       }
     }
     return
@@ -117,9 +134,9 @@ async function showConfigActionMessage(
   const showMessage = severity === 'error'
     ? vscode.window.showErrorMessage
     : vscode.window.showWarningMessage
-  const action = await showMessage(message, CREATE_OR_UPDATE_CONFIG, OPEN_CONFIG, SHOW_OUTPUT)
+  const action = await showMessage(message, RELOAD_CONFIG, OPEN_CONFIG, SHOW_OUTPUT)
 
-  if (action === CREATE_OR_UPDATE_CONFIG) {
+  if (action === RELOAD_CONFIG) {
     await vscode.commands.executeCommand('editorPeerBridge.updateConfig')
   } else if (action === OPEN_CONFIG) {
     await vscode.commands.executeCommand('editorPeerBridge.openConfig')
@@ -129,5 +146,6 @@ async function showConfigActionMessage(
 }
 
 export async function deactivate(): Promise<void> {
-  await server?.stop()
+  await controller?.dispose()
+  controller = undefined
 }

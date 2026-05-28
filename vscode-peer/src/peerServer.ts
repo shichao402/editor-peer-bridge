@@ -2,47 +2,155 @@ import { randomUUID } from 'crypto'
 import * as fs from 'fs'
 import * as http from 'http'
 import * as vscode from 'vscode'
-import { canPeerHandleRequest, loadBridgeConfig } from './config'
+import { canPeerHandleRequest, findAvailablePort, loadBridgeConfig } from './config'
 import { BridgeConfig, BridgeErrorResponse, BridgeSuccessResponse, OpenLocationRequest } from './protocol'
+
+export type PeerServerState = 'stopped' | 'listening' | 'failed'
+
+export interface EnsureListeningOptions {
+  /**
+   * Called when EADDRINUSE forced the server onto a different port.
+   * The controller is expected to persist this back to the config file so
+   * other peers can pick up the change.
+   */
+  onPortReassigned?: (newPort: number, previousPort: number) => Promise<void> | void
+}
 
 export class PeerServer {
   private server?: http.Server
   private activePort?: number
+  private _state: PeerServerState = 'stopped'
+  private _lastError?: Error
 
   constructor(private readonly output: vscode.OutputChannel) {}
 
-  async start(): Promise<void> {
-    const config = await loadBridgeConfig()
-    if (this.server && this.activePort === config.self.port) {
+  get state(): PeerServerState {
+    return this._state
+  }
+
+  get lastError(): Error | undefined {
+    return this._lastError
+  }
+
+  get listeningPort(): number | undefined {
+    return this._state === 'listening' ? this.activePort : undefined
+  }
+
+  /**
+   * Make the server listen on `config.self.port`. If that port is taken,
+   * automatically pick the next available port in the configured range and
+   * report it back through `options.onPortReassigned`. Idempotent: a no-op
+   * when already listening on the desired port.
+   */
+  async ensureListening(config: BridgeConfig, options: EnsureListeningOptions = {}): Promise<void> {
+    const desiredPort = config.self.port
+
+    if (this.server && this._state === 'listening' && this.activePort === desiredPort) {
       return
     }
 
     await this.stop()
 
-    this.server = http.createServer((request, response) => {
-      void this.handleRequest(request, response)
-    })
+    // First attempt: the port the user (or previous run) asked for.
+    if (await this.tryListen(desiredPort)) {
+      return
+    }
 
-    await new Promise<void>((resolve, reject) => {
-      this.server?.once('error', reject)
-      this.server?.listen(config.self.port, '127.0.0.1', () => resolve())
-    })
+    // Fall back: scan the allowed range for something free.
+    const usedByOtherPeers = new Set<number>([
+      ...config.knownPeers.map((p) => p.port),
+      desiredPort
+    ])
 
-    this.activePort = config.self.port
-    this.output.appendLine(`[peer-server] listening on 127.0.0.1:${config.self.port}`)
+    let fallbackPort: number
+    try {
+      fallbackPort = await findAvailablePort(usedByOtherPeers)
+    } catch (rangeError) {
+      this.markFailed(rangeError instanceof Error ? rangeError : new Error(String(rangeError)))
+      throw this._lastError
+    }
+
+    if (!(await this.tryListen(fallbackPort))) {
+      // tryListen has already populated _lastError.
+      throw this._lastError ?? new Error(`Failed to listen on fallback port ${fallbackPort}`)
+    }
+
+    this.output.appendLine(
+      `[peer-server] port ${desiredPort} was busy, switched to ${fallbackPort}.`
+    )
+
+    if (options.onPortReassigned) {
+      try {
+        await options.onPortReassigned(fallbackPort, desiredPort)
+      } catch (writeError) {
+        const msg = writeError instanceof Error ? writeError.message : String(writeError)
+        this.output.appendLine(`[peer-server] failed to persist new port: ${msg}`)
+      }
+    }
   }
 
   async stop(): Promise<void> {
     if (!this.server) {
+      this._state = 'stopped'
       return
     }
 
-    await new Promise<void>((resolve, reject) => {
-      this.server?.close((error) => error ? reject(error) : resolve())
-    })
-
+    const server = this.server
     this.server = undefined
     this.activePort = undefined
+
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()))
+    })
+
+    this._state = 'stopped'
+    this._lastError = undefined
+  }
+
+  /**
+   * Try to listen on `port`. Returns true on success, false on EADDRINUSE.
+   * Any other listen error is thrown so the caller can surface it.
+   */
+  private async tryListen(port: number): Promise<boolean> {
+    const server = http.createServer((request, response) => {
+      void this.handleRequest(request, response)
+    })
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const onError = (err: NodeJS.ErrnoException): void => {
+          server.removeListener('listening', onListening)
+          reject(err)
+        }
+        const onListening = (): void => {
+          server.removeListener('error', onError)
+          resolve()
+        }
+        server.once('error', onError)
+        server.once('listening', onListening)
+        server.listen(port, '127.0.0.1')
+      })
+    } catch (err) {
+      const error = err as NodeJS.ErrnoException
+      if (error.code === 'EADDRINUSE') {
+        return false
+      }
+      this.markFailed(error instanceof Error ? error : new Error(String(error)))
+      throw this._lastError
+    }
+
+    this.server = server
+    this.activePort = port
+    this._state = 'listening'
+    this._lastError = undefined
+    this.output.appendLine(`[peer-server] listening on 127.0.0.1:${port}`)
+    return true
+  }
+
+  private markFailed(error: Error): void {
+    this._state = 'failed'
+    this._lastError = error
+    this.output.appendLine(`[peer-server] failed: ${error.message}`)
   }
 
   private async handleRequest(request: http.IncomingMessage, response: http.ServerResponse): Promise<void> {

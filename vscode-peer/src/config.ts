@@ -96,8 +96,14 @@ function resolveBridgeConfig(
     self,
     knownPeers,
     typeHierarchy: raw.typeHierarchy,
-    routing: raw.routing
+    routing: raw.routing,
+    ui: raw.ui
   }
+}
+
+export function isStatusBarEnabled(config: BridgeConfig): boolean {
+  // Default to true when the user hasn't expressed a preference.
+  return config.ui?.statusBar !== false
 }
 
 export function getPrimaryWorkspaceRoot(): string | undefined {
@@ -282,7 +288,8 @@ async function createInitialConfig(
       }
     },
     typeHierarchy,
-    routing: { requestTimeoutMs: 3000 }
+    routing: { requestTimeoutMs: 3000 },
+    ui: { statusBar: true }
   }
 
   const configPath = path.join(workspaceRoot, CONFIG_FILE_NAME)
@@ -307,12 +314,25 @@ function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1)
 }
 
-async function findAvailablePort(usedPorts: Set<number>): Promise<number> {
+export async function findAvailablePort(usedPorts: Set<number>): Promise<number> {
   for (let port = PORT_RANGE_START; port <= PORT_RANGE_END; port++) {
     if (usedPorts.has(port)) continue
     if (await isPortAvailable(port)) return port
   }
   throw new Error(`No available port found in range ${PORT_RANGE_START}-${PORT_RANGE_END}`)
+}
+
+export async function updateSelfPort(configPath: string, peerId: string, newPort: number): Promise<void> {
+  const raw = JSON.parse(await fs.readFile(configPath, 'utf8')) as RawBridgeConfig
+  const peer = raw.peers[peerId]
+  if (!peer) {
+    throw new Error(`Peer "${peerId}" not found in ${configPath}`)
+  }
+  if (peer.port === newPort) {
+    return
+  }
+  peer.port = newPort
+  await fs.writeFile(configPath, JSON.stringify(raw, null, 2) + '\n', 'utf8')
 }
 
 function isPortAvailable(port: number): Promise<boolean> {

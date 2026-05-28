@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.0.12] - 2026-05-28
+
+### Added
+
+- VS Code peer: status bar indicator showing the live server port; click to open the bridge config. Toggle via `ui.statusBar` in `.editor-peer-bridge.json` (default: enabled).
+- VS Code peer: hot reload of `.editor-peer-bridge.json` — manual edits are picked up automatically; no need to reload the window.
+
+### Changed
+
+- VS Code peer: server lifecycle is now managed by a single reconcile loop (`BridgeController`), so commands and file events can no longer leave the server stuck in a half-started state.
+
+### Fixed
+
+- VS Code peer: `EADDRINUSE` no longer blocks startup. The server now falls back to the next free port in the configured range and persists the new port back into the bridge config.
+- VS Code peer: running "Update Config" while the server was not listening previously short-circuited on `[config] unchanged`; the server is now (re)started on every reconcile when needed.
+
 ## [0.0.11] - 2026-05-26
 
 ### Added
