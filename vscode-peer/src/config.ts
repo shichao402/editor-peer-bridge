@@ -106,6 +106,11 @@ export function isStatusBarEnabled(config: BridgeConfig): boolean {
   return config.ui?.statusBar !== false
 }
 
+export function isFocusOnJumpEnabled(config: BridgeConfig): boolean {
+  // Default to true when the user hasn't expressed a preference.
+  return config.ui?.focusOnJump !== false
+}
+
 export function getPrimaryWorkspaceRoot(): string | undefined {
   return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
 }
@@ -289,7 +294,7 @@ async function createInitialConfig(
     },
     typeHierarchy,
     routing: { requestTimeoutMs: 3000 },
-    ui: { statusBar: true }
+    ui: { statusBar: true, focusOnJump: true }
   }
 
   const configPath = path.join(workspaceRoot, CONFIG_FILE_NAME)

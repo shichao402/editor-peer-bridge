@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.0.13] - 2026-05-30
+
+### Added
+
+- Both peers: `ui.focusOnJump` toggle in `.editor-peer-bridge.json` (default: enabled). On a peer-initiated jump, the receiving IDE now raises its OS window to the foreground so the user no longer has to alt-tab.
+  - VS Code/Cursor/CodeBuddy: activates the app via the platform's native focus mechanism (`osascript` on macOS, `SetForegroundWindow` on Windows, `wmctrl`/`xdotool` on Linux).
+  - Rider: uses `ProjectUtil.focusProjectWindow` after opening the file.
+
+### Fixed
+
+- Rider peer: Jackson now ignores unknown JSON properties when reading `.editor-peer-bridge.json`, so configs written by a newer VS Code peer (e.g. with a `ui` section) no longer crash the Rider deserializer.
+
 ## [0.0.12] - 2026-05-28
 
 ### Added

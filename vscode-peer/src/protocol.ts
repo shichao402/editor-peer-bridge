@@ -60,6 +60,12 @@ export interface PeerEntry {
 export interface BridgeUiConfig {
   /** Show the status bar indicator. Defaults to true when the field is absent. */
   statusBar?: boolean
+  /**
+   * When this peer receives a jump, also raise its OS window to the
+   * foreground (in addition to focusing the editor inside the app).
+   * Defaults to true when the field is absent.
+   */
+  focusOnJump?: boolean
 }
 
 export interface RawBridgeConfig {

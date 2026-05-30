@@ -1,7 +1,9 @@
 package com.editorpeerbridge
 
+import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.intellij.ide.impl.ProjectUtil
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.Disposable
@@ -33,6 +35,7 @@ import java.util.concurrent.Executors
 @Service(Service.Level.PROJECT)
 class PeerBridgeService(private val project: Project) : Disposable {
     private val mapper: ObjectMapper = jacksonObjectMapper()
+        .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
     private val httpClient: HttpClient = HttpClient.newBuilder().build()
     private var server: HttpServer? = null
     private var activePort: Int? = null
@@ -463,6 +466,8 @@ class PeerBridgeService(private val project: Project) : Disposable {
         val virtualFile = LocalFileSystem.getInstance().refreshAndFindFileByPath(normalizedPath)
             ?: throw IllegalStateException("Requested file does not exist in Rider filesystem: $normalizedPath")
 
+        val focusOnJump = isFocusOnJumpEnabled(loadConfigOrNull())
+
         com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater {
             val descriptor = OpenFileDescriptor(
                 project,
@@ -478,7 +483,22 @@ class PeerBridgeService(private val project: Project) : Disposable {
             val endOffset = logicalPositionToOffset(document, request.document.selection.end)
             editor.selectionModel.setSelection(startOffset, endOffset)
             editor.scrollingModel.scrollToCaret(ScrollType.CENTER)
+
+            if (request.options.activateWindow && focusOnJump) {
+                // Raise the IDE window to the OS foreground so the user
+                // doesn't have to alt-tab after a peer-initiated jump.
+                try {
+                    ProjectUtil.focusProjectWindow(project, true)
+                } catch (_: Throwable) {
+                    // best-effort; never break the jump on focus failure
+                }
+            }
         }
+    }
+
+    private fun isFocusOnJumpEnabled(config: BridgeConfig?): Boolean {
+        // Default to true when the field (or the whole config) is absent.
+        return config?.ui?.focusOnJump != false
     }
 
     private fun logicalPositionToOffset(document: com.intellij.openapi.editor.Document, position: Position): Int {
@@ -601,6 +621,7 @@ class PeerBridgeService(private val project: Project) : Disposable {
             ),
             typeHierarchy = typeHierarchy,
             routing = RoutingConfig(requestTimeoutMs = 3000),
+            ui = UiConfig(statusBar = true, focusOnJump = true),
         )
 
         val configFile = File(workspaceRoot, ".editor-peer-bridge.json")
@@ -692,6 +713,7 @@ class PeerBridgeService(private val project: Project) : Disposable {
             knownPeers = knownPeers,
             typeHierarchy = raw.typeHierarchy,
             routing = raw.routing,
+            ui = raw.ui,
         )
     }
 

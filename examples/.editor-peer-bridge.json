@@ -50,5 +50,9 @@
   },
   "routing": {
     "requestTimeoutMs": 3000
+  },
+  "ui": {
+    "statusBar": true,
+    "focusOnJump": true
   }
 }

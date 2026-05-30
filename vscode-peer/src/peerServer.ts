@@ -2,8 +2,9 @@ import { randomUUID } from 'crypto'
 import * as fs from 'fs'
 import * as http from 'http'
 import * as vscode from 'vscode'
-import { canPeerHandleRequest, findAvailablePort, loadBridgeConfig } from './config'
+import { canPeerHandleRequest, findAvailablePort, isFocusOnJumpEnabled, loadBridgeConfig } from './config'
 import { BridgeConfig, BridgeErrorResponse, BridgeSuccessResponse, OpenLocationRequest } from './protocol'
+import { bringWindowToForeground } from './windowFocus'
 
 export type PeerServerState = 'stopped' | 'listening' | 'failed'
 
@@ -242,6 +243,12 @@ export class PeerServer {
             }))
             return
           }
+
+          if (body.options.activateWindow && isFocusOnJumpEnabled(config)) {
+            // Fire-and-forget OS-level window raise; never block the response.
+            void bringWindowToForeground(this.output)
+          }
+
           this.writeJson(response, 200, success(requestId, {
             targetPeerId: config.self.peerId,
             openedFile: body.document.filePath,

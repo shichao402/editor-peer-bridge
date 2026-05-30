@@ -62,10 +62,16 @@ data class RoutingConfig(
     val requestTimeoutMs: Long = 3000,
 )
 
+data class UiConfig(
+    val statusBar: Boolean? = null,
+    val focusOnJump: Boolean? = null,
+)
+
 data class RawBridgeConfig(
     val peers: Map<String, PeerEntry>,
     val typeHierarchy: Map<String, List<String>>,
     val routing: RoutingConfig? = null,
+    val ui: UiConfig? = null,
 )
 
 data class BridgeConfig(
@@ -73,6 +79,7 @@ data class BridgeConfig(
     val knownPeers: List<PeerEntry>,
     val typeHierarchy: Map<String, List<String>>,
     val routing: RoutingConfig? = null,
+    val ui: UiConfig? = null,
 )
 
 data class ErrorBody(
