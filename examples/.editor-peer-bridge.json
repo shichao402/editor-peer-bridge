@@ -53,6 +53,6 @@
   },
   "ui": {
     "statusBar": true,
-    "focusOnJump": true
+    "focusOnJump": false
   }
 }

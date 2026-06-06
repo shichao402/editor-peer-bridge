@@ -45,6 +45,9 @@ The bridge configuration contains:
 - `supportedProjectTypes`: project types a peer can handle.
 - `typeHierarchy`: parent-child relationships between project types.
 - `routing.requestTimeoutMs`: timeout for jump requests.
+- `ui.focusOnJump`: allow OS-level window focusing after receiving a jump. Defaults to `false`.
+
+VS Code, Cursor, and CodeBuddy also expose `editorPeerBridge.focusOnJump` in Settings. This setting is disabled by default and must be enabled before the extension raises the editor window to the OS foreground.
 
 For multiple VS Code-compatible editor instances, set `EDITOR_PEER_BRIDGE_PEER_ID` before launching the editor.
 

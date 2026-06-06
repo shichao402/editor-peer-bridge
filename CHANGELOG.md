@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.0.14] - 2026-06-06
+
+### Added
+
+- VS Code/Cursor/CodeBuddy: `editorPeerBridge.focusOnJump` setting to opt in to OS-level focusing after receiving a peer jump.
+
+### Changed
+
+- OS-level focusing is now disabled by default. New bridge configs write `ui.focusOnJump: false`.
+
+### Fixed
+
+- VS Code/Cursor/CodeBuddy on Windows: raising the window no longer restores maximized windows to a smaller normal window.
+
 ## [0.0.13] - 2026-05-30
 
 ### Added

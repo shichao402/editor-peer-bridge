@@ -23,10 +23,6 @@ export async function bringWindowToForeground(output: vscode.OutputChannel): Pro
     const appName = vscode.env.appName // e.g. "Visual Studio Code", "Cursor"
     switch (process.platform) {
       case 'darwin':
-        if (isCursorApp(appName)) {
-          output.appendLine('[window-focus] skipped macOS Cursor activation to preserve fullscreen state.')
-          return
-        }
         await focusOnMac(appName)
         break
       case 'win32':
@@ -43,10 +39,6 @@ export async function bringWindowToForeground(output: vscode.OutputChannel): Pro
     const msg = err instanceof Error ? err.message : String(err)
     output.appendLine(`[window-focus] ignored error: ${msg}`)
   }
-}
-
-function isCursorApp(appName: string): boolean {
-  return appName.toLowerCase().includes('cursor')
 }
 
 async function focusOnMac(appName: string): Promise<void> {
@@ -70,6 +62,7 @@ using System.Runtime.InteropServices;
 public class W {
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
 }
 "@
 $pid_ = ${process.pid}
@@ -77,7 +70,9 @@ for ($i = 0; $i -lt 6; $i++) {
   $proc = Get-Process -Id $pid_ -ErrorAction SilentlyContinue
   if ($null -eq $proc) { break }
   if ($proc.MainWindowHandle -ne [IntPtr]::Zero) {
-    [W]::ShowWindowAsync($proc.MainWindowHandle, 9) | Out-Null
+    if ([W]::IsIconic($proc.MainWindowHandle)) {
+      [W]::ShowWindowAsync($proc.MainWindowHandle, 9) | Out-Null
+    }
     [W]::SetForegroundWindow($proc.MainWindowHandle) | Out-Null
     break
   }

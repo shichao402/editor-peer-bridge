@@ -93,6 +93,9 @@ The plugin reads `.editor-peer-bridge.json` from the project root (or any parent
 | `supportedProjectTypes` | Project types this instance can handle |
 | `typeHierarchy` | Defines parent-child relationships between project types |
 | `routing.requestTimeoutMs` | Timeout for jump requests (default: 3000ms) |
+| `ui.focusOnJump` | Allow OS-level window focusing after receiving a jump (default: false) |
+
+For VS Code, Cursor, and CodeBuddy, OS-level focusing also requires the editor setting `editorPeerBridge.focusOnJump` to be enabled. It is disabled by default because some systems restore fullscreen or maximized windows when they are raised programmatically.
 
 ### Solution Auto-Detection (Rider)
 

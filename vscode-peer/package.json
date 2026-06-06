@@ -2,7 +2,7 @@
   "name": "editor-peer-bridge-vscode-peer",
   "displayName": "Editor Peer Bridge",
   "description": "Local cross-editor jump bridge for Rider, VS Code, Cursor, and CodeBuddy.",
-  "version": "0.0.13",
+  "version": "0.0.14",
   "publisher": "shichao402",
   "license": "MIT",
   "repository": {
@@ -54,7 +54,17 @@
         "command": "editorPeerBridge.openConfig",
         "title": "Editor Peer Bridge: Open Config"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Editor Peer Bridge",
+      "properties": {
+        "editorPeerBridge.focusOnJump": {
+          "type": "boolean",
+          "default": false,
+          "description": "Raise the VS Code/Cursor/CodeBuddy window to the OS foreground after receiving a peer jump. Disabled by default to avoid changing fullscreen or maximized window state on some systems."
+        }
+      }
+    }
   },
   "scripts": {
     "compile": "tsc -p ./",

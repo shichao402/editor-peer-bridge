@@ -8,6 +8,8 @@ import { normalizePath, normalizeStoredPath, pathMatchesRoots, projectTypeMatche
 const CONFIG_FILE_NAME = '.editor-peer-bridge.json'
 const PORT_RANGE_START = 47631
 const PORT_RANGE_END = 47700
+const SETTINGS_SECTION = 'editorPeerBridge'
+const FOCUS_ON_JUMP_SETTING = 'focusOnJump'
 
 export type EnsureConfigStatus = 'created' | 'updated' | 'unchanged' | 'skipped'
 
@@ -107,8 +109,12 @@ export function isStatusBarEnabled(config: BridgeConfig): boolean {
 }
 
 export function isFocusOnJumpEnabled(config: BridgeConfig): boolean {
-  // Default to true when the user hasn't expressed a preference.
-  return config.ui?.focusOnJump !== false
+  // Disabled by default. The VS Code/Cursor setting is the user-visible
+  // switch; the bridge config can still force this off for a workspace.
+  const enabledInSettings = vscode.workspace
+    .getConfiguration(SETTINGS_SECTION)
+    .get<boolean>(FOCUS_ON_JUMP_SETTING, false)
+  return enabledInSettings && config.ui?.focusOnJump !== false
 }
 
 export function getPrimaryWorkspaceRoot(): string | undefined {
@@ -298,7 +304,7 @@ async function createInitialConfig(
     },
     typeHierarchy,
     routing: { requestTimeoutMs: 3000 },
-    ui: { statusBar: true, focusOnJump: true }
+    ui: { statusBar: true, focusOnJump: false }
   }
 
   const configPath = path.join(workspaceRoot, CONFIG_FILE_NAME)

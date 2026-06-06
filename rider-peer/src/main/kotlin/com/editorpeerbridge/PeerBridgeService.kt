@@ -497,8 +497,8 @@ class PeerBridgeService(private val project: Project) : Disposable {
     }
 
     private fun isFocusOnJumpEnabled(config: BridgeConfig?): Boolean {
-        // Default to true when the field (or the whole config) is absent.
-        return config?.ui?.focusOnJump != false
+        // Default off: OS-level focusing can change fullscreen/maximized window state.
+        return config?.ui?.focusOnJump == true
     }
 
     private fun logicalPositionToOffset(document: com.intellij.openapi.editor.Document, position: Position): Int {
@@ -628,7 +628,7 @@ class PeerBridgeService(private val project: Project) : Disposable {
             ),
             typeHierarchy = typeHierarchy,
             routing = RoutingConfig(requestTimeoutMs = 3000),
-            ui = UiConfig(statusBar = true, focusOnJump = true),
+            ui = UiConfig(statusBar = true, focusOnJump = false),
         )
 
         val configFile = File(workspaceRoot, ".editor-peer-bridge.json")
