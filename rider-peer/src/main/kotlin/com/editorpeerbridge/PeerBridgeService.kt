@@ -538,24 +538,32 @@ class PeerBridgeService(private val project: Project) : Disposable {
         explicitPeerId: String?, solutionName: String?,
     ) {
         val raw = mapper.readValue(configFile, RawBridgeConfig::class.java)
-        val entries = raw.peers.values.toList()
+        val normalizedPeers = normalizePeerWorkspaceRoots(raw.peers)
+        val updatedPeers = normalizedPeers.peers.toMutableMap()
+        var changed = normalizedPeers.changed
 
         val projectType = solutionName ?: "all"
+        val entries = updatedPeers.values.toList()
+        val self = findSelfPeer(entries, editorKind, explicitPeerId, projectType)
+        val storedWorkspaceRoot = normalizeStoredPath(workspaceRoot)
 
-        // Check if self already exists
-        if (explicitPeerId != null) {
-            if (entries.any { it.peerId == explicitPeerId }) return
-        } else if (solutionName != null) {
-            // Match by editorKind + projectType (allows multiple Riders with different slns)
-            if (entries.any { it.editorKind == editorKind && it.projectType == projectType }) return
-        } else {
-            if (entries.any { it.editorKind == editorKind }) return
+        if (self != null) {
+            if (!containsWorkspaceRoot(self.workspaceRoots, storedWorkspaceRoot)) {
+                updatedPeers[self.peerId] = self.copy(workspaceRoots = self.workspaceRoots + storedWorkspaceRoot)
+                changed = true
+            }
+
+            if (changed) {
+                val updated = raw.copy(peers = updatedPeers)
+                configFile.writeText(mapper.writerWithDefaultPrettyPrinter().writeValueAsString(updated) + "\n")
+            }
+            return
         }
 
         // Self not found - register
         val usedPorts = entries.map { it.port }.toSet()
         val port = findAvailablePort(usedPorts)
-        val peerId = generatePeerId(editorKind, entries)
+        val peerId = explicitPeerId ?: generatePeerId(editorKind, entries)
         val instanceName = if (solutionName != null) {
             "${editorKind.name.replaceFirstChar { it.uppercase() }} ($solutionName)"
         } else {
@@ -567,12 +575,11 @@ class PeerBridgeService(private val project: Project) : Disposable {
             editorKind = editorKind,
             instanceName = instanceName,
             port = port,
-            workspaceRoots = listOf(workspaceRoot),
+            workspaceRoots = listOf(storedWorkspaceRoot),
             supportedProjectTypes = listOf(projectType),
             projectType = projectType,
         )
 
-        val updatedPeers = raw.peers.toMutableMap()
         updatedPeers[peerId] = newPeer
 
         // Ensure projectType exists in typeHierarchy
@@ -614,7 +621,7 @@ class PeerBridgeService(private val project: Project) : Disposable {
                     editorKind = editorKind,
                     instanceName = instanceName,
                     port = port,
-                    workspaceRoots = listOf(workspaceRoot),
+                    workspaceRoots = listOf(normalizeStoredPath(workspaceRoot)),
                     supportedProjectTypes = listOf(projectType),
                     projectType = projectType,
                 ),
@@ -626,6 +633,63 @@ class PeerBridgeService(private val project: Project) : Disposable {
 
         val configFile = File(workspaceRoot, ".editor-peer-bridge.json")
         configFile.writeText(mapper.writerWithDefaultPrettyPrinter().writeValueAsString(config) + "\n")
+    }
+
+    private fun findSelfPeer(
+        entries: List<PeerEntry>,
+        editorKind: EditorKind,
+        explicitPeerId: String?,
+        projectType: String,
+    ): PeerEntry? {
+        if (explicitPeerId != null) {
+            return entries.firstOrNull { it.peerId == explicitPeerId }
+        }
+
+        return entries.firstOrNull { it.editorKind == editorKind && it.projectType == projectType }
+            ?: entries.firstOrNull { it.editorKind == editorKind }
+    }
+
+    private data class NormalizedPeers(val peers: Map<String, PeerEntry>, val changed: Boolean)
+
+    private fun normalizePeerWorkspaceRoots(peers: Map<String, PeerEntry>): NormalizedPeers {
+        var changed = false
+        val normalizedPeers = peers.mapValues { (_, peer) ->
+            val normalizedRoots = normalizeWorkspaceRoots(peer.workspaceRoots)
+            if (normalizedRoots.changed) {
+                changed = true
+                peer.copy(workspaceRoots = normalizedRoots.roots)
+            } else {
+                peer
+            }
+        }
+        return NormalizedPeers(normalizedPeers, changed)
+    }
+
+    private data class NormalizedRoots(val roots: List<String>, val changed: Boolean)
+
+    private fun normalizeWorkspaceRoots(roots: List<String>): NormalizedRoots {
+        val result = mutableListOf<String>()
+        val seen = mutableSetOf<String>()
+        var changed = false
+
+        for (root in roots) {
+            val storedRoot = normalizeStoredPath(root)
+            val key = normalizePath(storedRoot)
+            if (!seen.add(key)) {
+                changed = true
+                continue
+            }
+
+            result.add(storedRoot)
+            changed = changed || storedRoot != root
+        }
+
+        return NormalizedRoots(result, changed)
+    }
+
+    private fun containsWorkspaceRoot(roots: List<String>, root: String): Boolean {
+        val key = normalizePath(root)
+        return roots.any { normalizePath(it) == key }
     }
 
     private fun generatePeerId(editorKind: EditorKind, existingPeers: List<PeerEntry>): String {

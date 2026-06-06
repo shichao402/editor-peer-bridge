@@ -3,7 +3,7 @@ import * as net from 'net'
 import * as path from 'path'
 import * as vscode from 'vscode'
 import { BridgeConfig, EditorKind, OpenLocationRequest, PeerConfig, PeerEntry, RawBridgeConfig } from './protocol'
-import { pathMatchesRoots, projectTypeMatches } from './pathUtils'
+import { normalizePath, normalizeStoredPath, pathMatchesRoots, projectTypeMatches } from './pathUtils'
 
 const CONFIG_FILE_NAME = '.editor-peer-bridge.json'
 const PORT_RANGE_START = 47631
@@ -173,7 +173,11 @@ async function ensureSelfInConfig(
   const entries = Object.values(raw.peers)
   const changes: string[] = []
   const projectType = solutionName ?? 'all'
+
+  normalizePeerWorkspaceRoots(entries, changes)
+
   const self = findSelfPeer(entries, editorKind, explicitPeerId, projectType)
+  const storedWorkspaceRoot = normalizeStoredPath(workspaceRoot)
 
   if (!self) {
     const usedPorts = new Set(entries.map((p) => p.port))
@@ -188,7 +192,7 @@ async function ensureSelfInConfig(
       editorKind,
       instanceName,
       port,
-      workspaceRoots: [workspaceRoot],
+      workspaceRoots: [storedWorkspaceRoot],
       supportedProjectTypes: [projectType],
       projectType
     }
@@ -201,9 +205,9 @@ async function ensureSelfInConfig(
     return { status: 'updated', configPath, peerId, changes }
   }
 
-  if (!self.workspaceRoots.includes(workspaceRoot)) {
-    self.workspaceRoots = [...self.workspaceRoots, workspaceRoot]
-    changes.push(`Added workspace root ${workspaceRoot}.`)
+  if (!containsWorkspaceRoot(self.workspaceRoots, storedWorkspaceRoot)) {
+    self.workspaceRoots = [...self.workspaceRoots, storedWorkspaceRoot]
+    changes.push(`Added workspace root ${storedWorkspaceRoot}.`)
   }
 
   if (!self.supportedProjectTypes.includes(projectType)) {
@@ -287,7 +291,7 @@ async function createInitialConfig(
         editorKind,
         instanceName,
         port,
-        workspaceRoots: [workspaceRoot],
+        workspaceRoots: [normalizeStoredPath(workspaceRoot)],
         supportedProjectTypes: [projectType],
         projectType
       }
@@ -317,6 +321,43 @@ function generateInstanceName(editorKind: EditorKind, existingPeers: PeerEntry[]
 
 function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1)
+}
+
+function normalizePeerWorkspaceRoots(entries: PeerEntry[], changes: string[]): void {
+  for (const peer of entries) {
+    const normalized = normalizeWorkspaceRoots(peer.workspaceRoots)
+    if (normalized.changed) {
+      peer.workspaceRoots = normalized.roots
+      changes.push(`Normalized workspace roots for ${peer.peerId}.`)
+    }
+  }
+}
+
+function normalizeWorkspaceRoots(roots: string[]): { roots: string[], changed: boolean } {
+  const result: string[] = []
+  const seen = new Set<string>()
+  let changed = false
+
+  for (const root of roots) {
+    const storedRoot = normalizeStoredPath(root)
+    const key = normalizePath(storedRoot)
+
+    if (seen.has(key)) {
+      changed = true
+      continue
+    }
+
+    seen.add(key)
+    result.push(storedRoot)
+    changed = changed || storedRoot !== root
+  }
+
+  return { roots: result, changed }
+}
+
+function containsWorkspaceRoot(roots: string[], root: string): boolean {
+  const key = normalizePath(root)
+  return roots.some((candidate) => normalizePath(candidate) === key)
 }
 
 export async function findAvailablePort(usedPorts: Set<number>): Promise<number> {

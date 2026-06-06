@@ -23,6 +23,10 @@ export async function bringWindowToForeground(output: vscode.OutputChannel): Pro
     const appName = vscode.env.appName // e.g. "Visual Studio Code", "Cursor"
     switch (process.platform) {
       case 'darwin':
+        if (isCursorApp(appName)) {
+          output.appendLine('[window-focus] skipped macOS Cursor activation to preserve fullscreen state.')
+          return
+        }
         await focusOnMac(appName)
         break
       case 'win32':
@@ -39,6 +43,10 @@ export async function bringWindowToForeground(output: vscode.OutputChannel): Pro
     const msg = err instanceof Error ? err.message : String(err)
     output.appendLine(`[window-focus] ignored error: ${msg}`)
   }
+}
+
+function isCursorApp(appName: string): boolean {
+  return appName.toLowerCase().includes('cursor')
 }
 
 async function focusOnMac(appName: string): Promise<void> {
