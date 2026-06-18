@@ -15,14 +15,20 @@ import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.popup.JBPopupFactory
+import com.intellij.openapi.util.Computable
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.openapi.util.Computable
+import com.intellij.openapi.vfs.VirtualFileManager
+import com.intellij.openapi.vfs.newvfs.BulkFileListener
+import com.intellij.openapi.vfs.newvfs.events.VFileEvent
+import com.intellij.util.Alarm
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import java.io.File
+import java.io.IOException
+import java.net.BindException
+import java.net.ConnectException
 import java.net.InetSocketAddress
-import java.net.ServerSocket
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
@@ -37,24 +43,289 @@ class PeerBridgeService(private val project: Project) : Disposable {
     private val mapper: ObjectMapper = jacksonObjectMapper()
         .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
     private val httpClient: HttpClient = HttpClient.newBuilder().build()
+    private val logger = PeerBridgeLog.loggerFor(project)
+    private val reconcileAlarm = Alarm(Alarm.ThreadToUse.POOLED_THREAD, this)
     private var server: HttpServer? = null
     private var activePort: Int? = null
     private var cachedConfig: BridgeConfig? = null
     private var configCacheTime: Long = 0
-    private val CONFIG_CACHE_TTL_MS = 5000L  // 5 second cache
-    private val MAX_REQUEST_BODY_SIZE = 1 * 1024 * 1024L  // 1 MB max
+    private var lastKnownSelfPeer: PeerEntry? = null
+    private var watchedConfigPath: String? = null
+    private var vfsConnection: com.intellij.util.messages.MessageBusConnection? = null
+    private var inflightReconcile = false
+    private var pendingReconcile = false
+    private val CONFIG_CACHE_TTL_MS = 5000L
+    private val MAX_REQUEST_BODY_SIZE = 1 * 1024 * 1024L
+
+    fun reconcile(showNotification: Boolean = false): BridgeConfigSupport.EnsureConfigResult {
+        if (inflightReconcile) {
+            pendingReconcile = true
+            return BridgeConfigSupport.EnsureConfigResult(
+                status = BridgeConfigSupport.EnsureConfigStatus.SKIPPED,
+                changes = listOf("Reconcile already in progress."),
+            )
+        }
+
+        inflightReconcile = true
+        return try {
+            val outcome = runReconcile()
+            if (showNotification) {
+                notify(formatConfigOutcomeMessage(outcome), NotificationType.INFORMATION)
+            }
+            outcome
+        } finally {
+            inflightReconcile = false
+            if (pendingReconcile) {
+                pendingReconcile = false
+                reconcile(showNotification)
+            }
+        }
+    }
+
+    fun restartServer(showNotification: Boolean = true): BridgeConfigSupport.EnsureConfigResult {
+        val previousPort = activePort
+        stopServer()
+        lastKnownSelfPeer = null
+        if (previousPort != null) {
+            log("[controller] stopped server on port $previousPort for manual restart.")
+        } else {
+            log("[controller] server was not listening; starting fresh.")
+        }
+
+        return try {
+            val outcome = reconcile(showNotification = false)
+            if (showNotification) {
+                val portSuffix = activePort?.let { " Server is listening on port $it." } ?: ""
+                notify("Editor Peer Bridge: server restarted.$portSuffix", NotificationType.INFORMATION)
+            }
+            outcome
+        } catch (error: Exception) {
+            val message = error.message ?: "Unexpected error."
+            log("[command] restart failed: $message")
+            if (showNotification) {
+                notify("Editor Peer Bridge: restart failed — $message", NotificationType.ERROR)
+            }
+            throw error
+        }
+    }
 
     fun startServer() {
-        ensureConfig()
-        val config = loadConfigOrNull() ?: return
-        if (server != null && activePort == config.self.port) {
-            return
+        reconcile()
+    }
+
+    fun stopServer() {
+        server?.stop(0)
+        server = null
+        activePort = null
+    }
+
+    fun createOrUpdateConfig(showNotification: Boolean = true) {
+        try {
+            reconcile(showNotification = showNotification)
+        } catch (error: Exception) {
+            notify("Config update failed: ${error.message ?: "Unexpected error."}", NotificationType.ERROR)
+        }
+    }
+
+    fun openConfig() {
+        try {
+            val basePath = project.basePath ?: run {
+                notify("Project base path not found.", NotificationType.WARNING)
+                return
+            }
+            var configFile = BridgeConfigSupport.findConfigFile(basePath)
+            if (configFile == null) {
+                reconcile(showNotification = false)
+                configFile = BridgeConfigSupport.findConfigFile(basePath)
+            }
+
+            if (configFile == null) {
+                notify("Config not found: ${BridgeConfigSupport.CONFIG_FILE_NAME}", NotificationType.WARNING)
+                return
+            }
+
+            openConfigFile(configFile)
+        } catch (error: Exception) {
+            notify("Open config failed: ${error.message ?: "Unexpected error."}", NotificationType.ERROR)
+        }
+    }
+
+    private fun openConfigFile(configFile: File) {
+        val normalizedPath = configFile.absolutePath.replace('\\', '/')
+        ApplicationManager.getApplication().invokeLater {
+            val virtualFile = LocalFileSystem.getInstance().refreshAndFindFileByPath(normalizedPath) ?: run {
+                notify("Config file not found: $normalizedPath", NotificationType.WARNING)
+                return@invokeLater
+            }
+            FileEditorManager.getInstance(project).openTextEditor(OpenFileDescriptor(project, virtualFile), true)
+        }
+    }
+
+    fun jumpToPeer(editor: Editor, file: VirtualFile) {
+        try {
+            val config = loadConfigOrNull() ?: run {
+                notify("Bridge config not found: ${BridgeConfigSupport.CONFIG_FILE_NAME}", NotificationType.WARNING)
+                return
+            }
+
+            val request = ApplicationManager.getApplication().runReadAction(Computable {
+                buildOpenLocationRequest(config, editor, file)
+            })
+            val candidates = resolveTargetPeers(config, request)
+
+            if (candidates.isEmpty()) {
+                notify("No matching peer found for ${file.path}", NotificationType.WARNING)
+                return
+            }
+
+            if (candidates.size == 1) {
+                sendToPeer(candidates[0], request, config, activateWindow = true)
+                return
+            }
+
+            showPeerChooser(candidates, request, config, editor)
+        } catch (error: Exception) {
+            notify("Jump failed: ${error.message ?: "Unexpected error."}", NotificationType.ERROR)
+        }
+    }
+
+    private fun runReconcile(): BridgeConfigSupport.EnsureConfigResult {
+        val basePath = project.basePath
+        val configResult = BridgeConfigSupport.ensureConfig(
+            workspaceRoot = basePath,
+            editorKind = EditorKind.rider,
+            explicitPeerId = System.getProperty("editor.peer.bridge.peerId"),
+            solutionName = detectSolutionName(),
+        )
+
+        log("[config] ${configResult.status}${configResult.configPath?.let { ": $it" } ?: ""}")
+        for (change in configResult.changes) {
+            log("[config] $change")
+        }
+
+        if (configResult.status == BridgeConfigSupport.EnsureConfigStatus.SKIPPED) {
+            stopServer()
+            return configResult
+        }
+
+        ensureConfigWatcher(configResult.configPath)
+
+        val config = try {
+            loadConfigOrNull(forceReload = true)
+        } catch (error: Exception) {
+            log("[controller] failed to load config: ${error.message}")
+            throw error
+        } ?: run {
+            stopServer()
+            return configResult
+        }
+
+        val shouldRestartForSelfChange = BridgeConfigSupport.selfPeerConfigChanged(lastKnownSelfPeer, config.self)
+        if (shouldRestartForSelfChange) {
+            val previousPort = activePort
+            stopServer()
+            if (previousPort != null) {
+                log("[controller] self peer config changed, stopped server on port $previousPort before restart.")
+            } else {
+                log("[controller] self peer config changed, restarting server.")
+            }
+        } else if (server != null && activePort == config.self.port) {
+            lastKnownSelfPeer = config.self
+            return configResult
         }
 
         stopServer()
 
-        val created = HttpServer.create(InetSocketAddress("127.0.0.1", config.self.port), 0)
-        created.executor = Executors.newCachedThreadPool()
+        val resolvedConfig = try {
+            val configuredPort = config.self.port
+            var listeningConfig = ensureListening(config, configResult.configPath)
+            if (listeningConfig.self.port != configuredPort) {
+                loadConfigOrNull(forceReload = true)?.let { listeningConfig = it }
+            }
+            listeningConfig
+        } catch (error: Exception) {
+            log("[controller] ensureListening failed: ${error.message ?: error.toString()}")
+            throw error
+        }
+
+        lastKnownSelfPeer = resolvedConfig.self
+        return configResult
+    }
+
+    /**
+     * Make the server listen on [BridgeConfig.self] port. If that port is taken,
+     * pick the next available port in the configured range, persist it, and listen there.
+     */
+    private fun ensureListening(config: BridgeConfig, configPath: String?): BridgeConfig {
+        val desiredPort = config.self.port
+
+        if (tryStartServer(config, desiredPort)) {
+            return config
+        }
+
+        val usedByOtherPeers = (config.knownPeers.map { it.port } + desiredPort).toSet()
+        val fallbackPort = try {
+            BridgeConfigSupport.findAvailablePort(usedByOtherPeers)
+        } catch (error: Exception) {
+            log("[peer-server] failed: ${error.message ?: error.toString()}")
+            throw error
+        }
+
+        val listeningConfig = config.copy(self = config.self.copy(port = fallbackPort))
+        if (!tryStartServer(listeningConfig, fallbackPort)) {
+            val message = "Failed to listen on fallback port $fallbackPort"
+            log("[peer-server] failed: $message")
+            throw IllegalStateException(message)
+        }
+
+        log("[peer-server] port $desiredPort was busy, switched to $fallbackPort.")
+
+        if (configPath != null) {
+            try {
+                BridgeConfigSupport.updateSelfPort(File(configPath), config.self.peerId, fallbackPort)
+                log("[controller] persisted port $desiredPort → $fallbackPort for peer ${config.self.peerId}.")
+            } catch (writeError: Exception) {
+                log("[peer-server] failed to persist new port: ${writeError.message ?: writeError.toString()}")
+            }
+        }
+
+        return listeningConfig
+    }
+
+    private fun tryStartServer(config: BridgeConfig, port: Int): Boolean {
+        return try {
+            val created = HttpServer.create(InetSocketAddress("127.0.0.1", port), 0)
+            created.executor = Executors.newCachedThreadPool()
+            bindServerContexts(created, config)
+            created.start()
+            server = created
+            activePort = port
+            log("[peer-server] listening on 127.0.0.1:$port")
+            true
+        } catch (error: Exception) {
+            if (isAddressInUse(error)) {
+                false
+            } else {
+                throw error
+            }
+        }
+    }
+
+    private fun isAddressInUse(error: Exception): Boolean {
+        if (error is BindException) {
+            return true
+        }
+        var cause: Throwable? = error.cause
+        while (cause != null) {
+            if (cause is BindException) {
+                return true
+            }
+            cause = cause.cause
+        }
+        return error is IOException && error.message?.contains("Address already in use", ignoreCase = true) == true
+    }
+
+    private fun bindServerContexts(created: HttpServer, config: BridgeConfig) {
         created.createContext("/peer/v1/info") { exchange ->
             handleExchange(exchange) { _, requestId ->
                 success(
@@ -128,112 +399,36 @@ class PeerBridgeService(private val project: Project) : Disposable {
                 ) to 200
             }
         }
-
-        created.start()
-        server = created
-        activePort = config.self.port
     }
 
-    fun stopServer() {
-        server?.stop(0)
-        server = null
-        activePort = null
-    }
-
-    @Synchronized
-    fun createOrUpdateConfig(showNotification: Boolean = true) {
-        try {
-            val basePath = project.basePath ?: run {
-                notify("Project base path not found.", NotificationType.WARNING)
-                return
-            }
-            val existingFile = findConfigFile(basePath)
-            val before = existingFile?.takeIf { it.exists() }?.readText()
-
-            ensureConfig()
-            cachedConfig = null
-            configCacheTime = 0
-            startServer()
-
-            if (!showNotification) return
-
-            val configFile = findConfigFile(basePath) ?: run {
-                notify("Config not found: .editor-peer-bridge.json", NotificationType.WARNING)
-                return
-            }
-            val after = configFile.readText()
-            val message = when {
-                existingFile == null -> "Editor Peer Bridge: created config."
-                before != after -> "Editor Peer Bridge: updated config."
-                else -> "Editor Peer Bridge: config is already up to date."
-            }
-            notify(message, NotificationType.INFORMATION)
-        } catch (error: Exception) {
-            notify("Config update failed: ${error.message ?: "Unexpected error."}", NotificationType.ERROR)
+    private fun ensureConfigWatcher(configPath: String?) {
+        if (configPath == null || watchedConfigPath == configPath) {
+            return
         }
+
+        vfsConnection?.disconnect()
+        watchedConfigPath = configPath
+        val normalizedPath = configPath.replace('\\', '/')
+        LocalFileSystem.getInstance().refreshAndFindFileByPath(normalizedPath)
+
+        val connection = project.messageBus.connect(this)
+        vfsConnection = connection
+        connection.subscribe(VirtualFileManager.VFS_CHANGES, object : BulkFileListener {
+            override fun after(events: List<VFileEvent>) {
+                val relevant = events.any { event ->
+                    event.file?.path?.replace('\\', '/') == normalizedPath
+                }
+                if (relevant) {
+                    log("[controller] config change detected, scheduling reconcile.")
+                    scheduleReconcile()
+                }
+            }
+        })
     }
 
-    fun openConfig() {
-        try {
-            val basePath = project.basePath ?: run {
-                notify("Project base path not found.", NotificationType.WARNING)
-                return
-            }
-            var configFile = findConfigFile(basePath)
-            if (configFile == null) {
-                createOrUpdateConfig(showNotification = false)
-                configFile = findConfigFile(basePath)
-            }
-
-            if (configFile == null) {
-                notify("Config not found: .editor-peer-bridge.json", NotificationType.WARNING)
-                return
-            }
-
-            openConfigFile(configFile)
-        } catch (error: Exception) {
-            notify("Open config failed: ${error.message ?: "Unexpected error."}", NotificationType.ERROR)
-        }
-    }
-
-    private fun openConfigFile(configFile: File) {
-        val normalizedPath = configFile.absolutePath.replace('\\', '/')
-        ApplicationManager.getApplication().invokeLater {
-            val virtualFile = LocalFileSystem.getInstance().refreshAndFindFileByPath(normalizedPath) ?: run {
-                notify("Config file not found: $normalizedPath", NotificationType.WARNING)
-                return@invokeLater
-            }
-            FileEditorManager.getInstance(project).openTextEditor(OpenFileDescriptor(project, virtualFile), true)
-        }
-    }
-
-    fun jumpToPeer(editor: Editor, file: VirtualFile) {
-        try {
-            val config = loadConfigOrNull() ?: run {
-                notify("Bridge config not found: .editor-peer-bridge.json", NotificationType.WARNING)
-                return
-            }
-
-            val request = ApplicationManager.getApplication().runReadAction(Computable {
-                buildOpenLocationRequest(config, editor, file)
-            })
-            val candidates = resolveTargetPeers(config, request)
-
-            if (candidates.isEmpty()) {
-                notify("No matching peer found for ${file.path}", NotificationType.WARNING)
-                return
-            }
-
-            if (candidates.size == 1) {
-                sendToPeer(candidates[0], request, config, activateWindow = true)
-                return
-            }
-
-            // Multiple candidates: show popup with "All" option
-            showPeerChooser(candidates, request, config, editor)
-        } catch (error: Exception) {
-            notify("Jump failed: ${error.message ?: "Unexpected error."}", NotificationType.ERROR)
-        }
+    private fun scheduleReconcile() {
+        reconcileAlarm.cancelAllRequests()
+        reconcileAlarm.addRequest({ reconcile() }, 150)
     }
 
     private fun showPeerChooser(
@@ -250,7 +445,7 @@ class PeerBridgeService(private val project: Project) : Disposable {
             choices.add(PeerChoice(peer = peer, label = "${peer.instanceName} (${peer.editorKind} · :${peer.port})"))
         }
 
-        com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater {
+        ApplicationManager.getApplication().invokeLater {
             JBPopupFactory.getInstance()
                 .createPopupChooserBuilder(choices)
                 .setTitle("Jump to Peer")
@@ -264,7 +459,7 @@ class PeerBridgeService(private val project: Project) : Disposable {
                     }
                 })
                 .setItemChosenCallback { choice ->
-                    com.intellij.openapi.application.ApplicationManager.getApplication().executeOnPooledThread {
+                    ApplicationManager.getApplication().executeOnPooledThread {
                         if (choice.isAll) {
                             broadcastToPeers(candidates, request, config)
                         } else {
@@ -288,7 +483,8 @@ class PeerBridgeService(private val project: Project) : Disposable {
         if (response.ok) {
             notify("Jumped to ${target.instanceName}", NotificationType.INFORMATION)
         } else {
-            notify("Jump to ${target.instanceName} failed: ${response.error.message}", NotificationType.ERROR)
+            log("[peer-client] open-location to ${target.instanceName} failed: ${response.error.code} ${response.error.message}")
+            notify("${target.instanceName} - ${response.error.message}", NotificationType.ERROR)
         }
     }
 
@@ -374,16 +570,29 @@ class PeerBridgeService(private val project: Project) : Disposable {
         } catch (error: Exception) {
             ErrorOrSuccess(
                 ok = false,
-                error = ErrorBody("REQUEST_FAILED", error.message ?: "Peer request failed."),
+                error = ErrorBody("REQUEST_FAILED", formatRequestFailedMessage(target, error)),
             )
         }
+    }
+
+    private fun formatRequestFailedMessage(peer: PeerEntry, error: Exception): String {
+        val cause = error.cause
+        if (error is ConnectException || cause is ConnectException) {
+            return "Connection refused — is ${peer.instanceName} (${peer.editorKind}) running on port ${peer.port}?"
+        }
+
+        val message = error.message.orEmpty()
+        if (message.contains("Connection refused", ignoreCase = true)) {
+            return "Connection refused — is ${peer.instanceName} (${peer.editorKind}) running on port ${peer.port}?"
+        }
+
+        return cause?.message?.takeIf { it.isNotBlank() } ?: message.ifBlank { "Request failed" }
     }
 
     private fun handleExchange(exchange: HttpExchange, handler: (String, String) -> Any) {
         val requestId = exchange.requestHeaders.getFirst("X-Editor-Peer-Request-Id") ?: UUID.randomUUID().toString()
 
         try {
-            // Check Content-Length before reading
             val contentLength = exchange.requestHeaders.getFirst("Content-Length")?.toLongOrNull()
             if (contentLength != null && contentLength > MAX_REQUEST_BODY_SIZE) {
                 respondJson(exchange, 413, error(requestId, "REQUEST_TOO_LARGE", "Request body exceeds $MAX_REQUEST_BODY_SIZE bytes"))
@@ -413,7 +622,7 @@ class PeerBridgeService(private val project: Project) : Disposable {
                 output.write(raw)
                 output.flush()
             }
-        } catch (error: Exception) {
+        } catch (_: Exception) {
             exchange.responseBody.close()
         }
     }
@@ -468,7 +677,7 @@ class PeerBridgeService(private val project: Project) : Disposable {
 
         val focusOnJump = isFocusOnJumpEnabled(loadConfigOrNull())
 
-        com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater {
+        ApplicationManager.getApplication().invokeLater {
             val descriptor = OpenFileDescriptor(
                 project,
                 virtualFile,
@@ -485,19 +694,16 @@ class PeerBridgeService(private val project: Project) : Disposable {
             editor.scrollingModel.scrollToCaret(ScrollType.CENTER)
 
             if (request.options.activateWindow && focusOnJump) {
-                // Raise the IDE window to the OS foreground so the user
-                // doesn't have to alt-tab after a peer-initiated jump.
                 try {
                     ProjectUtil.focusProjectWindow(project, true)
                 } catch (_: Throwable) {
-                    // best-effort; never break the jump on focus failure
+                    // best-effort
                 }
             }
         }
     }
 
     private fun isFocusOnJumpEnabled(config: BridgeConfig?): Boolean {
-        // Default off: OS-level focusing can change fullscreen/maximized window state.
         return config?.ui?.focusOnJump == true
     }
 
@@ -508,8 +714,6 @@ class PeerBridgeService(private val project: Project) : Disposable {
         return (lineStart + (position.column - 1)).coerceIn(lineStart, lineEnd)
     }
 
-    // ── Auto-config: ensure config exists and self is registered ──
-
     private fun detectSolutionName(): String? {
         val name = project.name
         if (name.isBlank()) return null
@@ -519,266 +723,31 @@ class PeerBridgeService(private val project: Project) : Disposable {
             .ifEmpty { null }
     }
 
-    private fun ensureConfig() {
-        val basePath = project.basePath ?: return
-        val editorKind = EditorKind.rider
-        val explicitPeerId = System.getProperty("editor.peer.bridge.peerId")
-        val solutionName = detectSolutionName()
-
-        val existingFile = findConfigFile(basePath)
-        if (existingFile != null) {
-            ensureSelfInConfig(existingFile, editorKind, basePath, explicitPeerId, solutionName)
-        } else {
-            createInitialConfig(basePath, editorKind, solutionName)
-        }
-    }
-
-    private fun ensureSelfInConfig(
-        configFile: File, editorKind: EditorKind, workspaceRoot: String,
-        explicitPeerId: String?, solutionName: String?,
-    ) {
-        val raw = mapper.readValue(configFile, RawBridgeConfig::class.java)
-        val normalizedPeers = normalizePeerWorkspaceRoots(raw.peers)
-        val updatedPeers = normalizedPeers.peers.toMutableMap()
-        var changed = normalizedPeers.changed
-
-        val projectType = solutionName ?: "all"
-        val entries = updatedPeers.values.toList()
-        val self = findSelfPeer(entries, editorKind, explicitPeerId, projectType)
-        val storedWorkspaceRoot = normalizeStoredPath(workspaceRoot)
-
-        if (self != null) {
-            if (!containsWorkspaceRoot(self.workspaceRoots, storedWorkspaceRoot)) {
-                updatedPeers[self.peerId] = self.copy(workspaceRoots = self.workspaceRoots + storedWorkspaceRoot)
-                changed = true
-            }
-
-            if (changed) {
-                val updated = raw.copy(peers = updatedPeers)
-                configFile.writeText(mapper.writerWithDefaultPrettyPrinter().writeValueAsString(updated) + "\n")
-            }
-            return
-        }
-
-        // Self not found - register
-        val usedPorts = entries.map { it.port }.toSet()
-        val port = findAvailablePort(usedPorts)
-        val peerId = explicitPeerId ?: generatePeerId(editorKind, entries)
-        val instanceName = if (solutionName != null) {
-            "${editorKind.name.replaceFirstChar { it.uppercase() }} ($solutionName)"
-        } else {
-            generateInstanceName(editorKind, entries)
-        }
-
-        val newPeer = PeerEntry(
-            peerId = peerId,
-            editorKind = editorKind,
-            instanceName = instanceName,
-            port = port,
-            workspaceRoots = listOf(storedWorkspaceRoot),
-            supportedProjectTypes = listOf(projectType),
-            projectType = projectType,
-        )
-
-        updatedPeers[peerId] = newPeer
-
-        // Ensure projectType exists in typeHierarchy
-        val updatedHierarchy = raw.typeHierarchy.toMutableMap()
-        if (projectType != "all" && !updatedHierarchy.containsKey(projectType)) {
-            updatedHierarchy[projectType] = emptyList()
-            // Add to "all" children if "all" exists
-            updatedHierarchy["all"]?.let { allChildren ->
-                if (!allChildren.contains(projectType)) {
-                    updatedHierarchy["all"] = allChildren + projectType
-                }
-            }
-        }
-
-        val updated = raw.copy(peers = updatedPeers, typeHierarchy = updatedHierarchy)
-        configFile.writeText(mapper.writerWithDefaultPrettyPrinter().writeValueAsString(updated) + "\n")
-    }
-
-    private fun createInitialConfig(workspaceRoot: String, editorKind: EditorKind, solutionName: String?) {
-        val port = findAvailablePort(emptySet())
-        val projectType = solutionName ?: "all"
-        val peerId = "${editorKind.name}-01"
-        val instanceName = if (solutionName != null) {
-            "${editorKind.name.replaceFirstChar { it.uppercase() }} ($solutionName)"
-        } else {
-            "${editorKind.name.replaceFirstChar { it.uppercase() }} 01"
-        }
-
-        val typeHierarchy = if (projectType != "all") {
-            mapOf("all" to listOf(projectType), projectType to emptyList())
-        } else {
-            mapOf("all" to emptyList())
-        }
-
-        val config = RawBridgeConfig(
-            peers = mapOf(
-                peerId to PeerEntry(
-                    peerId = peerId,
-                    editorKind = editorKind,
-                    instanceName = instanceName,
-                    port = port,
-                    workspaceRoots = listOf(normalizeStoredPath(workspaceRoot)),
-                    supportedProjectTypes = listOf(projectType),
-                    projectType = projectType,
-                ),
-            ),
-            typeHierarchy = typeHierarchy,
-            routing = RoutingConfig(requestTimeoutMs = 3000),
-            ui = UiConfig(statusBar = true, focusOnJump = false),
-        )
-
-        val configFile = File(workspaceRoot, ".editor-peer-bridge.json")
-        configFile.writeText(mapper.writerWithDefaultPrettyPrinter().writeValueAsString(config) + "\n")
-    }
-
-    private fun findSelfPeer(
-        entries: List<PeerEntry>,
-        editorKind: EditorKind,
-        explicitPeerId: String?,
-        projectType: String,
-    ): PeerEntry? {
-        if (explicitPeerId != null) {
-            return entries.firstOrNull { it.peerId == explicitPeerId }
-        }
-
-        return entries.firstOrNull { it.editorKind == editorKind && it.projectType == projectType }
-            ?: entries.firstOrNull { it.editorKind == editorKind }
-    }
-
-    private data class NormalizedPeers(val peers: Map<String, PeerEntry>, val changed: Boolean)
-
-    private fun normalizePeerWorkspaceRoots(peers: Map<String, PeerEntry>): NormalizedPeers {
-        var changed = false
-        val normalizedPeers = peers.mapValues { (_, peer) ->
-            val normalizedRoots = normalizeWorkspaceRoots(peer.workspaceRoots)
-            if (normalizedRoots.changed) {
-                changed = true
-                peer.copy(workspaceRoots = normalizedRoots.roots)
-            } else {
-                peer
-            }
-        }
-        return NormalizedPeers(normalizedPeers, changed)
-    }
-
-    private data class NormalizedRoots(val roots: List<String>, val changed: Boolean)
-
-    private fun normalizeWorkspaceRoots(roots: List<String>): NormalizedRoots {
-        val result = mutableListOf<String>()
-        val seen = mutableSetOf<String>()
-        var changed = false
-
-        for (root in roots) {
-            val storedRoot = normalizeStoredPath(root)
-            val key = normalizePath(storedRoot)
-            if (!seen.add(key)) {
-                changed = true
-                continue
-            }
-
-            result.add(storedRoot)
-            changed = changed || storedRoot != root
-        }
-
-        return NormalizedRoots(result, changed)
-    }
-
-    private fun containsWorkspaceRoot(roots: List<String>, root: String): Boolean {
-        val key = normalizePath(root)
-        return roots.any { normalizePath(it) == key }
-    }
-
-    private fun generatePeerId(editorKind: EditorKind, existingPeers: List<PeerEntry>): String {
-        val samePeers = existingPeers.filter { it.editorKind == editorKind }
-        val num = (samePeers.size + 1).toString().padStart(2, '0')
-        return "${editorKind.name}-$num"
-    }
-
-    private fun generateInstanceName(editorKind: EditorKind, existingPeers: List<PeerEntry>): String {
-        val samePeers = existingPeers.filter { it.editorKind == editorKind }
-        val num = (samePeers.size + 1).toString().padStart(2, '0')
-        return "${editorKind.name.replaceFirstChar { it.uppercase() }} $num"
-    }
-
-    companion object {
-        private const val PORT_RANGE_START = 47631
-        private const val PORT_RANGE_END = 47700
-    }
-
-    private fun findAvailablePort(usedPorts: Set<Int>): Int {
-        for (port in PORT_RANGE_START..PORT_RANGE_END) {
-            if (port in usedPorts) continue
-            try {
-                ServerSocket(port, 1, java.net.InetAddress.getByName("127.0.0.1")).use { return port }
-            } catch (_: Exception) {
-                // port in use
-            }
-        }
-        throw IllegalStateException("No available port found in range $PORT_RANGE_START-$PORT_RANGE_END")
-    }
-
-    // ── Config loading ──
-
-    private fun loadConfigOrNull(): BridgeConfig? {
-        // Use cached config if available and not stale
+    private fun loadConfigOrNull(forceReload: Boolean = false): BridgeConfig? {
         val now = System.currentTimeMillis()
-        if (cachedConfig != null && (now - configCacheTime) < CONFIG_CACHE_TTL_MS) {
+        if (!forceReload && cachedConfig != null && (now - configCacheTime) < CONFIG_CACHE_TTL_MS) {
             return cachedConfig
         }
 
         val basePath = project.basePath ?: return null
-        val configFile = findConfigFile(basePath) ?: return null
-        val raw = mapper.readValue(configFile, RawBridgeConfig::class.java)
-        val config = resolveBridgeConfig(raw, EditorKind.rider)
-        
-        // Cache the config
+        val configFile = BridgeConfigSupport.findConfigFile(basePath) ?: return null
+        val config = BridgeConfigSupport.loadBridgeConfig(configFile, EditorKind.rider, detectSolutionName())
         cachedConfig = config
         configCacheTime = now
-        
         return config
     }
 
-    private fun findConfigFile(startPath: String): File? {
-        var current: File? = File(startPath).absoluteFile
-        while (current != null) {
-            val candidate = File(current, ".editor-peer-bridge.json")
-            if (candidate.exists()) {
-                return candidate
-            }
-            current = current.parentFile
+    private fun formatConfigOutcomeMessage(result: BridgeConfigSupport.EnsureConfigResult): String {
+        return when (result.status) {
+            BridgeConfigSupport.EnsureConfigStatus.CREATED -> "Editor Peer Bridge: created config."
+            BridgeConfigSupport.EnsureConfigStatus.UPDATED -> "Editor Peer Bridge: updated config."
+            BridgeConfigSupport.EnsureConfigStatus.UNCHANGED -> "Editor Peer Bridge: config is already up to date."
+            BridgeConfigSupport.EnsureConfigStatus.SKIPPED -> "Editor Peer Bridge: ${result.changes.firstOrNull() ?: "config skipped."}"
         }
-        return null
     }
 
-    private fun resolveBridgeConfig(raw: RawBridgeConfig, myEditorKind: EditorKind): BridgeConfig {
-        val entries = raw.peers.values.toList()
-
-        // Allow explicit peerId selection via JVM property (supports multiple instances of same editorKind)
-        val explicitPeerId = System.getProperty("editor.peer.bridge.peerId")
-        val solutionName = detectSolutionName()
-
-        val self = when {
-            explicitPeerId != null -> entries.firstOrNull { it.peerId == explicitPeerId }
-                ?: throw IllegalStateException("No peer entry found for peerId '$explicitPeerId' in .editor-peer-bridge.json")
-            solutionName != null -> entries.firstOrNull { it.editorKind == myEditorKind && it.projectType == solutionName }
-                ?: entries.firstOrNull { it.editorKind == myEditorKind }
-                ?: throw IllegalStateException("No peer entry found for editorKind '$myEditorKind' in .editor-peer-bridge.json")
-            else -> entries.firstOrNull { it.editorKind == myEditorKind }
-                ?: throw IllegalStateException("No peer entry found for editorKind '$myEditorKind' in .editor-peer-bridge.json")
-        }
-
-        val knownPeers = entries.filter { it.peerId != self.peerId }
-        return BridgeConfig(
-            self = self,
-            knownPeers = knownPeers,
-            typeHierarchy = raw.typeHierarchy,
-            routing = raw.routing,
-            ui = raw.ui,
-        )
+    private fun log(line: String) {
+        logger.appendLine(line)
     }
 
     private fun notify(message: String, type: NotificationType) {
@@ -794,10 +763,14 @@ class PeerBridgeService(private val project: Project) : Disposable {
         ErrorResponse(requestId = requestId, error = ErrorBody(code, message, details))
 
     override fun dispose() {
+        reconcileAlarm.cancelAllRequests()
+        vfsConnection?.disconnect()
+        vfsConnection = null
+        watchedConfigPath = null
         stopServer()
-        // Clear config cache to free memory
         cachedConfig = null
         configCacheTime = 0
+        lastKnownSelfPeer = null
     }
 }
 

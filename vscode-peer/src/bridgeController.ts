@@ -5,10 +5,11 @@ import {
   ensureConfig,
   getBridgeConfigPath,
   loadBridgeConfig,
+  selfPeerConfigChanged,
   updateSelfPort
 } from './config'
 import { PeerServer, PeerServerState } from './peerServer'
-import { BridgeConfig } from './protocol'
+import { BridgeConfig, PeerEntry } from './protocol'
 
 export interface ReconcileOutcome {
   configResult: EnsureConfigResult
@@ -44,6 +45,7 @@ export class BridgeController implements vscode.Disposable {
   private pending = false
   private debounceTimer?: NodeJS.Timeout
   private disposed = false
+  private lastKnownSelfPeer?: PeerEntry
 
   constructor(private readonly output: vscode.OutputChannel) {
     this.server = new PeerServer(output)
@@ -108,6 +110,19 @@ export class BridgeController implements vscode.Disposable {
 
     const configuredPort = bridgeConfig.self.port
     let portReassigned = false
+    const shouldRestartForSelfChange = selfPeerConfigChanged(this.lastKnownSelfPeer, bridgeConfig.self)
+
+    if (shouldRestartForSelfChange) {
+      const previousPort = this.server.listeningPort
+      await this.server.stop()
+      if (previousPort !== undefined) {
+        this.output.appendLine(
+          `[controller] self peer config changed, stopped server on port ${previousPort} before restart.`
+        )
+      } else {
+        this.output.appendLine('[controller] self peer config changed, restarting server.')
+      }
+    }
 
     try {
       await this.server.ensureListening(bridgeConfig, {
@@ -115,6 +130,10 @@ export class BridgeController implements vscode.Disposable {
           portReassigned = true
           if (configResult.configPath) {
             await updateSelfPort(configResult.configPath, bridgeConfig.self.peerId, newPort)
+            bridgeConfig = {
+              ...bridgeConfig,
+              self: { ...bridgeConfig.self, port: newPort }
+            }
             this.output.appendLine(
               `[controller] persisted port ${previousPort} → ${newPort} for peer ${bridgeConfig.self.peerId}.`
             )
@@ -126,6 +145,18 @@ export class BridgeController implements vscode.Disposable {
       this.output.appendLine(`[controller] ensureListening failed: ${error.message}`)
       return { configResult, portReassigned, error, bridgeConfig, state: this.server.state }
     }
+
+    if (portReassigned) {
+      try {
+        bridgeConfig = await loadBridgeConfig()
+      } catch (err) {
+        const error = err instanceof Error ? err : new Error(String(err))
+        this.output.appendLine(`[controller] failed to reload config after port reassignment: ${error.message}`)
+        return { configResult, portReassigned, error, bridgeConfig, state: this.server.state }
+      }
+    }
+
+    this.lastKnownSelfPeer = { ...bridgeConfig.self }
 
     return {
       configResult,
@@ -176,6 +207,22 @@ export class BridgeController implements vscode.Disposable {
       this.debounceTimer = undefined
       void this.reconcile()
     }, 150)
+  }
+
+  /**
+   * Stop the peer server and run a full reconcile pass (config sync + listen).
+   * Unlike a plain reconcile, this always tears down an active listener first.
+   */
+  async restartServer(): Promise<ReconcileOutcome> {
+    const previousPort = this.server.listeningPort
+    await this.server.stop()
+    this.lastKnownSelfPeer = undefined
+    if (previousPort !== undefined) {
+      this.output.appendLine(`[controller] stopped server on port ${previousPort} for manual restart.`)
+    } else {
+      this.output.appendLine('[controller] server was not listening; starting fresh.')
+    }
+    return this.reconcile()
   }
 
   /** Status snapshot for surfacing in error messages / future status bar. */

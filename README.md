@@ -154,6 +154,10 @@ Each editor instance runs a lightweight HTTP server on localhost. When you trigg
 
 All communication is local (127.0.0.1) - no data leaves your machine.
 
+## Cross-IDE consistency
+
+Every supported editor implements the same bridge behaviors: automatic config repair with backup, watching `.editor-peer-bridge.json` for changes, restarting the local HTTP server when the current IDE's peer entry changes, **Restart Server** and **Open Log** commands, and friendly jump error messages when a peer is unreachable. See [`shared/protocol/README.md`](shared/protocol/README.md) for details.
+
 ## Project Structure
 
 ```

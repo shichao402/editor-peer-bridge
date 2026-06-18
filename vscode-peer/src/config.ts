@@ -10,6 +10,16 @@ const PORT_RANGE_START = 47631
 const PORT_RANGE_END = 47700
 const SETTINGS_SECTION = 'editorPeerBridge'
 const FOCUS_ON_JUMP_SETTING = 'focusOnJump'
+const EDITOR_KINDS: readonly EditorKind[] = ['rider', 'vscode', 'cursor', 'codebuddy']
+
+interface ParsedBridgeConfig {
+  raw: RawBridgeConfig
+  warnings: string[]
+}
+
+type ParseBridgeConfigResult =
+  | { ok: true; parsed: ParsedBridgeConfig }
+  | { ok: false; error: string }
 
 export type EnsureConfigStatus = 'created' | 'updated' | 'unchanged' | 'skipped'
 
@@ -59,11 +69,14 @@ export async function loadBridgeConfig(): Promise<BridgeConfig> {
     throw new Error(`Could not find ${CONFIG_FILE_NAME} from ${workspaceRoot} or its parent directories.`)
   }
 
-  const raw = await fs.readFile(configPath, 'utf8')
-  const rawConfig = JSON.parse(raw) as RawBridgeConfig
-  const solutionName = await detectSolutionName(workspaceRoot)
+  const content = await fs.readFile(configPath, 'utf8')
+  const parsed = parseBridgeConfigContent(content)
+  if (!parsed.ok) {
+    throw new Error(`Invalid ${CONFIG_FILE_NAME}: ${parsed.error}`)
+  }
 
-  return resolveBridgeConfig(rawConfig, detectEditorKind(), solutionName)
+  const solutionName = await detectSolutionName(workspaceRoot)
+  return resolveBridgeConfig(parsed.parsed.raw, detectEditorKind(), solutionName)
 }
 
 function resolveBridgeConfig(
@@ -148,6 +161,161 @@ async function findConfigPath(startDirectory: string): Promise<string | undefine
   }
 }
 
+// ── Config parse / validate / backup ──
+
+export async function backupConfigFile(configPath: string): Promise<string> {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const backupPath = `${configPath}.bak.${timestamp}`
+  await fs.copyFile(configPath, backupPath)
+  return backupPath
+}
+
+function isEditorKind(value: unknown): value is EditorKind {
+  return typeof value === 'string' && (EDITOR_KINDS as readonly string[]).includes(value)
+}
+
+function isValidPort(port: unknown): port is number {
+  return typeof port === 'number'
+    && Number.isInteger(port)
+    && port >= PORT_RANGE_START
+    && port <= PORT_RANGE_END
+}
+
+function validatePeerEntry(value: unknown): PeerEntry | null {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  const peer = value as Partial<PeerEntry>
+  if (typeof peer.peerId !== 'string' || !peer.peerId.trim()) {
+    return null
+  }
+  if (!isEditorKind(peer.editorKind)) {
+    return null
+  }
+  if (typeof peer.instanceName !== 'string' || !peer.instanceName.trim()) {
+    return null
+  }
+  if (!isValidPort(peer.port)) {
+    return null
+  }
+  if (!Array.isArray(peer.workspaceRoots) || peer.workspaceRoots.some((root) => typeof root !== 'string')) {
+    return null
+  }
+  if (!Array.isArray(peer.supportedProjectTypes)
+    || peer.supportedProjectTypes.some((type) => typeof type !== 'string')) {
+    return null
+  }
+  if (typeof peer.projectType !== 'string' || !peer.projectType.trim()) {
+    return null
+  }
+
+  return {
+    peerId: peer.peerId,
+    editorKind: peer.editorKind,
+    instanceName: peer.instanceName,
+    port: peer.port,
+    workspaceRoots: peer.workspaceRoots,
+    supportedProjectTypes: peer.supportedProjectTypes,
+    projectType: peer.projectType
+  }
+}
+
+function salvageRawBridgeConfig(data: unknown): { raw: RawBridgeConfig | null; warnings: string[] } {
+  const warnings: string[] = []
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return { raw: null, warnings: ['Root value is not a JSON object.'] }
+  }
+
+  const obj = data as Record<string, unknown>
+  const peers: Record<string, PeerEntry> = {}
+
+  if (obj.peers && typeof obj.peers === 'object' && !Array.isArray(obj.peers)) {
+    for (const [key, value] of Object.entries(obj.peers)) {
+      const peer = validatePeerEntry(value)
+      if (peer) {
+        const peerId = peer.peerId || key
+        peers[peerId] = { ...peer, peerId }
+      } else {
+        warnings.push(`Dropped invalid peer entry "${key}".`)
+      }
+    }
+  } else {
+    warnings.push('Missing or invalid peers object.')
+  }
+
+  const typeHierarchy: Record<string, string[]> = { all: [] }
+  if (obj.typeHierarchy && typeof obj.typeHierarchy === 'object' && !Array.isArray(obj.typeHierarchy)) {
+    for (const [key, value] of Object.entries(obj.typeHierarchy)) {
+      if (Array.isArray(value) && value.every((item) => typeof item === 'string')) {
+        typeHierarchy[key] = [...value]
+      } else {
+        warnings.push(`Dropped invalid typeHierarchy entry "${key}".`)
+      }
+    }
+  } else {
+    warnings.push('Missing or invalid typeHierarchy; using defaults.')
+  }
+
+  if (!typeHierarchy.all) {
+    typeHierarchy.all = []
+  }
+
+  const routing = obj.routing && typeof obj.routing === 'object' && !Array.isArray(obj.routing)
+    ? obj.routing as RawBridgeConfig['routing']
+    : undefined
+
+  const ui = obj.ui && typeof obj.ui === 'object' && !Array.isArray(obj.ui)
+    ? obj.ui as RawBridgeConfig['ui']
+    : undefined
+
+  return {
+    raw: {
+      peers,
+      typeHierarchy,
+      routing,
+      ui
+    },
+    warnings
+  }
+}
+
+function parseBridgeConfigContent(content: string): ParseBridgeConfigResult {
+  let data: unknown
+  try {
+    data = JSON.parse(content)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    return { ok: false, error: `JSON parse error: ${message}` }
+  }
+
+  const salvaged = salvageRawBridgeConfig(data)
+  if (!salvaged.raw) {
+    return { ok: false, error: salvaged.warnings.join(' ') }
+  }
+
+  return { ok: true, parsed: { raw: salvaged.raw, warnings: salvaged.warnings } }
+}
+
+function snapshotSelfPeer(peer: PeerEntry): string {
+  return JSON.stringify({
+    peerId: peer.peerId,
+    editorKind: peer.editorKind,
+    instanceName: peer.instanceName,
+    port: peer.port,
+    workspaceRoots: [...peer.workspaceRoots].sort(),
+    supportedProjectTypes: [...peer.supportedProjectTypes].sort(),
+    projectType: peer.projectType
+  })
+}
+
+export function selfPeerConfigChanged(previous: PeerEntry | undefined, current: PeerEntry): boolean {
+  if (!previous) {
+    return false
+  }
+  return snapshotSelfPeer(previous) !== snapshotSelfPeer(current)
+}
+
 // ── Auto-config: ensure config exists and self is registered ──
 
 export async function ensureConfig(): Promise<EnsureConfigResult> {
@@ -175,17 +343,61 @@ async function ensureSelfInConfig(
   explicitPeerId: string | undefined,
   solutionName: string | undefined
 ): Promise<EnsureConfigResult> {
-  const raw = JSON.parse(await fs.readFile(configPath, 'utf8')) as RawBridgeConfig
-  const entries = Object.values(raw.peers)
   const changes: string[] = []
   const projectType = solutionName ?? 'all'
+  let backedUp = false
 
-  normalizePeerWorkspaceRoots(entries, changes)
+  const backupBeforeRepair = async (reason: string): Promise<void> => {
+    if (backedUp) {
+      return
+    }
+    const backupPath = await backupConfigFile(configPath)
+    backedUp = true
+    changes.push(`Backed up config to ${backupPath} (${reason}).`)
+  }
 
-  const self = findSelfPeer(entries, editorKind, explicitPeerId, projectType)
+  let content: string
+  try {
+    content = await fs.readFile(configPath, 'utf8')
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    return { status: 'skipped', changes: [`Failed to read config: ${message}`] }
+  }
+
+  const parsed = parseBridgeConfigContent(content)
+  let raw: RawBridgeConfig
+  let repairRequired = false
+
+  if (!parsed.ok) {
+    repairRequired = true
+    await backupBeforeRepair('invalid config file')
+    changes.push(`Config repair: ${parsed.error}`)
+    return createInitialConfigAt(configPath, workspaceRoot, editorKind, explicitPeerId, solutionName, changes)
+  }
+
+  raw = parsed.parsed.raw
+  if (parsed.parsed.warnings.length > 0) {
+    repairRequired = true
+    for (const warning of parsed.parsed.warnings) {
+      changes.push(warning)
+    }
+  }
+
+  normalizePeerWorkspaceRoots(Object.values(raw.peers), changes)
+
+  let self = findSelfPeer(Object.values(raw.peers), editorKind, explicitPeerId, projectType)
+  if (self && !validatePeerEntry(self)) {
+    repairRequired = true
+    await backupBeforeRepair('invalid self peer block')
+    changes.push(`Removed invalid self peer ${self.peerId}; will recreate or repair.`)
+    delete raw.peers[self.peerId]
+    self = undefined
+  }
+
   const storedWorkspaceRoot = normalizeStoredPath(workspaceRoot)
 
   if (!self) {
+    const entries = Object.values(raw.peers)
     const usedPorts = new Set(entries.map((p) => p.port))
     const port = await findAvailablePort(usedPorts)
     const peerId = explicitPeerId ?? generatePeerId(editorKind, entries)
@@ -229,6 +441,9 @@ async function ensureSelfInConfig(
   ensureProjectType(raw, projectType, changes)
 
   if (changes.length > 0) {
+    if (repairRequired && !backedUp) {
+      await backupBeforeRepair('config repair')
+    }
     await fs.writeFile(configPath, JSON.stringify(raw, null, 2) + '\n', 'utf8')
     return { status: 'updated', configPath, peerId: self.peerId, changes }
   }
@@ -278,6 +493,18 @@ async function createInitialConfig(
   explicitPeerId: string | undefined,
   solutionName: string | undefined
 ): Promise<EnsureConfigResult> {
+  const configPath = path.join(workspaceRoot, CONFIG_FILE_NAME)
+  return createInitialConfigAt(configPath, workspaceRoot, editorKind, explicitPeerId, solutionName, [])
+}
+
+async function createInitialConfigAt(
+  configPath: string,
+  workspaceRoot: string,
+  editorKind: EditorKind,
+  explicitPeerId: string | undefined,
+  solutionName: string | undefined,
+  priorChanges: string[]
+): Promise<EnsureConfigResult> {
   const port = await findAvailablePort(new Set())
   const projectType = solutionName ?? 'all'
   const peerId = explicitPeerId ?? `${editorKind}-01`
@@ -307,10 +534,14 @@ async function createInitialConfig(
     ui: { statusBar: true, focusOnJump: false }
   }
 
-  const configPath = path.join(workspaceRoot, CONFIG_FILE_NAME)
   await fs.writeFile(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8')
 
-  return { status: 'created', configPath, peerId, changes: [`Created config with peer ${peerId}.`] }
+  return {
+    status: 'created',
+    configPath,
+    peerId,
+    changes: [...priorChanges, `Created config with peer ${peerId}.`]
+  }
 }
 
 function generatePeerId(editorKind: EditorKind, existingPeers: PeerEntry[]): string {
@@ -375,7 +606,13 @@ export async function findAvailablePort(usedPorts: Set<number>): Promise<number>
 }
 
 export async function updateSelfPort(configPath: string, peerId: string, newPort: number): Promise<void> {
-  const raw = JSON.parse(await fs.readFile(configPath, 'utf8')) as RawBridgeConfig
+  const content = await fs.readFile(configPath, 'utf8')
+  const parsed = parseBridgeConfigContent(content)
+  if (!parsed.ok) {
+    throw new Error(`Cannot update port: invalid config (${parsed.error})`)
+  }
+
+  const raw = parsed.parsed.raw
   const peer = raw.peers[peerId]
   if (!peer) {
     throw new Error(`Peer "${peerId}" not found in ${configPath}`)

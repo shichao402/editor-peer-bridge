@@ -235,6 +235,13 @@ function runStep(label, cmd, args, opts = {}) {
     });
 }
 
+function resolveGradleCommand(cwd) {
+    const wrapperName = IS_WINDOWS ? 'gradlew.bat' : 'gradlew';
+    const wrapperPath = resolve(cwd, wrapperName);
+    if (!existsSync(wrapperPath)) return 'gradle';
+    return IS_WINDOWS ? wrapperName : `./${wrapperName}`;
+}
+
 function runCapture(label, cmd, args, opts = {}) {
     return new Promise((resolveStep, rejectStep) => {
         const { spawnCmd, spawnArgs, spawnOpts } = createSpawnConfig(cmd, args, opts, ['ignore', 'pipe', 'pipe']);
@@ -492,6 +499,7 @@ async function uploadRiderPackage({ token, packagePath }) {
 async function publishRider({ token, dryRun, skipBuild, packagePath }) {
     const cwd = resolve(REPO_ROOT, 'rider-peer');
     const env = { JETBRAINS_PUBLISH_TOKEN: token };
+    const gradleCmd = resolveGradleCommand(cwd);
 
     if (packagePath) {
         if (dryRun) {
@@ -504,7 +512,7 @@ async function publishRider({ token, dryRun, skipBuild, packagePath }) {
     }
 
     if (dryRun) {
-        await runStep('rider: build plugin (dry-run)', 'gradle', ['buildPlugin'], { cwd, env });
+        await runStep('rider: build plugin (dry-run)', gradleCmd, ['buildPlugin'], { cwd, env });
         return;
     }
 
@@ -514,7 +522,7 @@ async function publishRider({ token, dryRun, skipBuild, packagePath }) {
         // rebuild upstream tasks. publishPlugin still needs the zip present.
         args.push('--rerun-tasks=false');
     }
-    await runStep('rider: publish plugin', 'gradle', args, { cwd, env });
+    await runStep('rider: publish plugin', gradleCmd, args, { cwd, env });
 }
 
 // --- Main ------------------------------------------------------------------

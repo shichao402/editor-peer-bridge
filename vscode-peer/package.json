@@ -2,7 +2,7 @@
   "name": "editor-peer-bridge-vscode-peer",
   "displayName": "Editor Peer Bridge",
   "description": "Local cross-editor jump bridge for Rider, VS Code, Cursor, and CodeBuddy.",
-  "version": "0.0.14",
+  "version": "0.0.15",
   "publisher": "shichao402",
   "license": "MIT",
   "repository": {
@@ -34,7 +34,9 @@
     "onCommand:editorPeerBridge.jumpToPeer",
     "onCommand:editorPeerBridge.createConfig",
     "onCommand:editorPeerBridge.updateConfig",
-    "onCommand:editorPeerBridge.openConfig"
+    "onCommand:editorPeerBridge.openConfig",
+    "onCommand:editorPeerBridge.openLog",
+    "onCommand:editorPeerBridge.restartServer"
   ],
   "contributes": {
     "commands": [
@@ -53,6 +55,14 @@
       {
         "command": "editorPeerBridge.openConfig",
         "title": "Editor Peer Bridge: Open Config"
+      },
+      {
+        "command": "editorPeerBridge.openLog",
+        "title": "Editor Peer Bridge: Open Log"
+      },
+      {
+        "command": "editorPeerBridge.restartServer",
+        "title": "Editor Peer Bridge: Restart Server"
       }
     ],
     "configuration": {

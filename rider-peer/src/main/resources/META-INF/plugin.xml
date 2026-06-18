@@ -42,5 +42,13 @@
                 class="com.editorpeerbridge.OpenConfigAction"
                 text="Editor Peer Bridge: Open Config"
                 description="Open the Editor Peer Bridge config file"/>
+        <action id="EditorPeerBridge.OpenLog"
+                class="com.editorpeerbridge.OpenLogAction"
+                text="Editor Peer Bridge: Open Log"
+                description="Open the Editor Peer Bridge log file"/>
+        <action id="EditorPeerBridge.RestartServer"
+                class="com.editorpeerbridge.RestartServerAction"
+                text="Editor Peer Bridge: Restart Server"
+                description="Restart the local Editor Peer Bridge HTTP server"/>
     </actions>
 </idea-plugin>

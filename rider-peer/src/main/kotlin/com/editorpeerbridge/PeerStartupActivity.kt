@@ -5,6 +5,6 @@ import com.intellij.openapi.startup.StartupActivity
 
 class PeerStartupActivity : StartupActivity.DumbAware {
     override fun runActivity(project: Project) {
-        project.getService(PeerBridgeService::class.java).startServer()
+        project.getService(PeerBridgeService::class.java).reconcile()
     }
 }

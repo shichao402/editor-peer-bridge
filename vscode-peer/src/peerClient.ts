@@ -122,6 +122,31 @@ async function broadcastToPeers(
   }
 }
 
+function formatRequestFailedMessage(peer: PeerConfig, error: unknown): string {
+  const code = error instanceof Error && error.cause && typeof error.cause === 'object' && 'code' in error.cause
+    ? String((error.cause as { code: unknown }).code)
+    : undefined
+
+  if (code === 'ECONNREFUSED') {
+    return `Connection refused — is ${peer.instanceName} (${peer.editorKind}) running on port ${peer.port}?`
+  }
+
+  if (error instanceof Error) {
+    if (error.cause instanceof Error && error.cause.message) {
+      return error.cause.message
+    }
+    if (error.cause && typeof error.cause === 'object' && 'message' in error.cause) {
+      const causeMessage = (error.cause as { message: unknown }).message
+      if (typeof causeMessage === 'string' && causeMessage) {
+        return causeMessage
+      }
+    }
+    return error.message || 'Request failed'
+  }
+
+  return String(error)
+}
+
 async function postJson<T>(peer: PeerConfig, endpoint: string, body: unknown, timeoutMs: number): Promise<BridgeResponse<T>> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
@@ -143,6 +168,16 @@ async function postJson<T>(peer: PeerConfig, endpoint: string, body: unknown, ti
     })
 
     return await response.json() as BridgeResponse<T>
+  } catch (error) {
+    return {
+      ok: false,
+      requestId: 'local',
+      protocolVersion: 1,
+      error: {
+        code: 'REQUEST_FAILED',
+        message: formatRequestFailedMessage(peer, error)
+      }
+    }
   } finally {
     clearTimeout(timer)
   }

@@ -1,5 +1,6 @@
 import * as vscode from 'vscode'
 import { BridgeController, getBridgeConfigPath } from './bridgeController'
+import { attachFileLogging, getLogFilePath, openLogDocument } from './log'
 import { jumpToPeer } from './peerClient'
 import { StatusBarController } from './statusBar'
 
@@ -12,6 +13,7 @@ const SHOW_OUTPUT = 'Show Output'
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const output = vscode.window.createOutputChannel('Editor Peer Bridge')
+  attachFileLogging(output, getLogFilePath(context))
   context.subscriptions.push(output)
 
   controller = new BridgeController(output)
@@ -46,6 +48,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
     vscode.commands.registerCommand('editorPeerBridge.openConfig', async () => {
       await openConfigDocument(output)
+    }),
+    vscode.commands.registerCommand('editorPeerBridge.openLog', async () => {
+      await openLogDocument(context, output)
+    }),
+    vscode.commands.registerCommand('editorPeerBridge.restartServer', async () => {
+      await runRestartServerCommand(output)
     })
   )
 
@@ -58,6 +66,32 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const message = error instanceof Error ? error.message : String(error)
     output.appendLine(`[activate] ${message}`)
     await showConfigActionMessage(`Editor Peer Bridge: ${message}`, output, 'warning')
+  }
+}
+
+async function runRestartServerCommand(output: vscode.OutputChannel): Promise<void> {
+  if (!controller) {
+    return
+  }
+
+  try {
+    output.appendLine('[command] restarting server...')
+    const outcome = await controller.restartServer()
+    if (outcome.error) {
+      throw outcome.error
+    }
+
+    const portSuffix = outcome.activePort
+      ? outcome.portReassigned
+        ? ` Server is listening on port ${outcome.activePort} (reassigned).`
+        : ` Server is listening on port ${outcome.activePort}.`
+      : ''
+    output.appendLine(`[command] server restarted.${portSuffix}`)
+    await vscode.window.showInformationMessage(`Editor Peer Bridge: server restarted.${portSuffix}`)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    output.appendLine(`[command] restart failed: ${message}`)
+    await showConfigActionMessage(`Editor Peer Bridge: restart failed — ${message}`, output, 'error')
   }
 }
 

@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.0.15] - 2026-06-18
+
+### Added
+
+- VS Code/Cursor/CodeBuddy: **Open Log** and **Restart Server** commands; bridge events are written to a disk log file.
+- Rider: **Open Log** and **Restart Server** actions; disk logging via `PeerBridgeLog`.
+- `shared/protocol/README.md` documenting cross-IDE bridge behaviors (config repair, config watch, restart, commands, jump errors).
+
+### Changed
+
+- VS Code/Cursor/CodeBuddy: proactive config repair (backup, salvage, overwrite) and automatic HTTP server restart when the current IDE's peer entry in `.editor-peer-bridge.json` changes.
+- Rider: aligned with VS Code peer — `BridgeConfigSupport`, config file watching, reconcile/restart lifecycle, friendly jump error messages when a peer is unreachable, and automatic port reassignment on bind conflicts.
+- VS Code/Cursor/CodeBuddy: clearer error messages for failed peer HTTP requests (`postJson`).
+- README: cross-IDE consistency section linking to the protocol doc.
+- Release script: use Gradle wrapper (`gradlew`) for Rider publish when present.
+
 ## [0.0.14] - 2026-06-06
 
 ### Added
