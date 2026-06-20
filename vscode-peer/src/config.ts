@@ -5,12 +5,45 @@ import * as vscode from 'vscode'
 import { BridgeConfig, EditorKind, OpenLocationRequest, PeerConfig, PeerEntry, RawBridgeConfig } from './protocol'
 import { normalizePath, normalizeStoredPath, pathMatchesRoots, projectTypeMatches } from './pathUtils'
 
+export { selfPeerConfigChanged } from './selfPeerSync'
+
 const CONFIG_FILE_NAME = '.editor-peer-bridge.json'
 const PORT_RANGE_START = 47631
 const PORT_RANGE_END = 47700
 const SETTINGS_SECTION = 'editorPeerBridge'
 const FOCUS_ON_JUMP_SETTING = 'focusOnJump'
+const WORKSPACE_PEER_ID_KEY = 'editorPeerBridge.assignedPeerId'
 const EDITOR_KINDS: readonly EditorKind[] = ['rider', 'vscode', 'cursor', 'codebuddy']
+
+export interface ConfigContext {
+  workspaceState?: vscode.Memento
+}
+
+let activeConfigContext: ConfigContext | undefined
+
+/** Bind this VS Code/Cursor window to a stable peer entry for the lifetime of the workspace. */
+export function setConfigContext(context: ConfigContext | undefined): void {
+  activeConfigContext = context
+}
+
+function getEffectiveExplicitPeerId(): string | undefined {
+  return process.env.EDITOR_PEER_BRIDGE_PEER_ID
+    ?? activeConfigContext?.workspaceState?.get<string>(WORKSPACE_PEER_ID_KEY)
+}
+
+export async function bindPeerIdToWorkspace(peerId: string): Promise<void> {
+  const workspaceState = activeConfigContext?.workspaceState
+  if (!workspaceState) {
+    return
+  }
+
+  const current = workspaceState.get<string>(WORKSPACE_PEER_ID_KEY)
+  if (current === peerId) {
+    return
+  }
+
+  await workspaceState.update(WORKSPACE_PEER_ID_KEY, peerId)
+}
 
 interface ParsedBridgeConfig {
   raw: RawBridgeConfig
@@ -76,32 +109,23 @@ export async function loadBridgeConfig(): Promise<BridgeConfig> {
   }
 
   const solutionName = await detectSolutionName(workspaceRoot)
-  return resolveBridgeConfig(parsed.parsed.raw, detectEditorKind(), solutionName)
+  return resolveBridgeConfig(parsed.parsed.raw, detectEditorKind(), solutionName, workspaceRoot)
 }
 
 function resolveBridgeConfig(
   raw: RawBridgeConfig,
   myEditorKind: EditorKind,
-  solutionName: string | undefined
+  solutionName: string | undefined,
+  workspaceRoot: string
 ): BridgeConfig {
   const entries = Object.values(raw.peers)
+  const explicitPeerId = getEffectiveExplicitPeerId()
+  const projectType = solutionName ?? 'all'
 
-  // Allow explicit peerId selection via environment variable (supports multiple instances of same editorKind)
-  const explicitPeerId = process.env.EDITOR_PEER_BRIDGE_PEER_ID
-
-  let self: PeerEntry | undefined
-  if (explicitPeerId) {
-    self = entries.find((p) => p.peerId === explicitPeerId)
-  } else if (solutionName) {
-    self =
-      entries.find((p) => p.editorKind === myEditorKind && p.projectType === solutionName) ??
-      entries.find((p) => p.editorKind === myEditorKind)
-  } else {
-    self = entries.find((p) => p.editorKind === myEditorKind)
-  }
+  const self = findSelfPeer(entries, myEditorKind, explicitPeerId, projectType, workspaceRoot)
 
   if (!self) {
-    const searchKey = explicitPeerId ?? myEditorKind
+    const searchKey = explicitPeerId ?? `${myEditorKind}@${normalizeStoredPath(workspaceRoot)}`
     throw new Error(`No peer entry found for "${searchKey}" in .editor-peer-bridge.json`)
   }
 
@@ -297,25 +321,6 @@ function parseBridgeConfigContent(content: string): ParseBridgeConfigResult {
   return { ok: true, parsed: { raw: salvaged.raw, warnings: salvaged.warnings } }
 }
 
-function snapshotSelfPeer(peer: PeerEntry): string {
-  return JSON.stringify({
-    peerId: peer.peerId,
-    editorKind: peer.editorKind,
-    instanceName: peer.instanceName,
-    port: peer.port,
-    workspaceRoots: [...peer.workspaceRoots].sort(),
-    supportedProjectTypes: [...peer.supportedProjectTypes].sort(),
-    projectType: peer.projectType
-  })
-}
-
-export function selfPeerConfigChanged(previous: PeerEntry | undefined, current: PeerEntry): boolean {
-  if (!previous) {
-    return false
-  }
-  return snapshotSelfPeer(previous) !== snapshotSelfPeer(current)
-}
-
 // ── Auto-config: ensure config exists and self is registered ──
 
 export async function ensureConfig(): Promise<EnsureConfigResult> {
@@ -325,7 +330,7 @@ export async function ensureConfig(): Promise<EnsureConfigResult> {
   }
 
   const editorKind = detectEditorKind()
-  const explicitPeerId = process.env.EDITOR_PEER_BRIDGE_PEER_ID
+  const explicitPeerId = getEffectiveExplicitPeerId()
   const solutionName = await detectSolutionName(workspaceRoot)
   const existingPath = await findConfigPath(workspaceRoot)
 
@@ -385,7 +390,7 @@ async function ensureSelfInConfig(
 
   normalizePeerWorkspaceRoots(Object.values(raw.peers), changes)
 
-  let self = findSelfPeer(Object.values(raw.peers), editorKind, explicitPeerId, projectType)
+  let self = findSelfPeer(Object.values(raw.peers), editorKind, explicitPeerId, projectType, workspaceRoot)
   if (self && !validatePeerEntry(self)) {
     repairRequired = true
     await backupBeforeRepair('invalid self peer block')
@@ -423,7 +428,7 @@ async function ensureSelfInConfig(
     return { status: 'updated', configPath, peerId, changes }
   }
 
-  if (!containsWorkspaceRoot(self.workspaceRoots, storedWorkspaceRoot)) {
+  if (shouldAppendWorkspaceRoot(self, storedWorkspaceRoot)) {
     self.workspaceRoots = [...self.workspaceRoots, storedWorkspaceRoot]
     changes.push(`Added workspace root ${storedWorkspaceRoot}.`)
   }
@@ -451,18 +456,48 @@ async function ensureSelfInConfig(
   return { status: 'unchanged', configPath, peerId: self.peerId, changes }
 }
 
+function peerMatchesPrimaryWorkspace(peer: PeerEntry, workspaceRoot: string): boolean {
+  const currentPath = normalizePath(normalizeStoredPath(workspaceRoot))
+  const primary = peer.workspaceRoots[0]
+  if (primary && normalizePath(primary) === currentPath) {
+    return true
+  }
+
+  return peer.workspaceRoots.length === 1 && normalizePath(peer.workspaceRoots[0]) === currentPath
+}
+
+function shouldAppendWorkspaceRoot(peer: PeerEntry, workspaceRoot: string): boolean {
+  if (containsWorkspaceRoot(peer.workspaceRoots, workspaceRoot)) {
+    return false
+  }
+
+  const currentPath = normalizePath(normalizeStoredPath(workspaceRoot))
+  const isStrictChildOfPeerRoot = peer.workspaceRoots.some((root) => {
+    const normalizedRoot = normalizePath(root)
+    return normalizedRoot !== currentPath && currentPath.startsWith(`${normalizedRoot}/`)
+  })
+
+  // A child folder opened as its own workspace should get its own peer, not be merged in.
+  return !isStrictChildOfPeerRoot
+}
+
 function findSelfPeer(
   entries: PeerEntry[],
   editorKind: EditorKind,
   explicitPeerId: string | undefined,
-  projectType: string
+  projectType: string,
+  workspaceRoot: string
 ): PeerEntry | undefined {
   if (explicitPeerId) {
     return entries.find((p) => p.peerId === explicitPeerId)
   }
 
-  return entries.find((p) => p.editorKind === editorKind && p.projectType === projectType) ??
-    entries.find((p) => p.editorKind === editorKind)
+  const byKind = entries.filter((p) => p.editorKind === editorKind)
+
+  return (
+    byKind.find((p) => p.projectType === projectType && peerMatchesPrimaryWorkspace(p, workspaceRoot)) ??
+    byKind.find((p) => peerMatchesPrimaryWorkspace(p, workspaceRoot))
+  )
 }
 
 function ensureProjectType(raw: RawBridgeConfig, projectType: string, changes: string[]): void {

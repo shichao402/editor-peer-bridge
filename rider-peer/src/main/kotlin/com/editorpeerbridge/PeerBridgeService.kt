@@ -47,6 +47,8 @@ class PeerBridgeService(private val project: Project) : Disposable {
     private val reconcileAlarm = Alarm(Alarm.ThreadToUse.POOLED_THREAD, this)
     private var server: HttpServer? = null
     private var activePort: Int? = null
+    private var attachedPort: Int? = null
+    private var isAttached = false
     private var cachedConfig: BridgeConfig? = null
     private var configCacheTime: Long = 0
     private var lastKnownSelfPeer: PeerEntry? = null
@@ -117,6 +119,8 @@ class PeerBridgeService(private val project: Project) : Disposable {
         server?.stop(0)
         server = null
         activePort = null
+        attachedPort = null
+        isAttached = false
     }
 
     fun createOrUpdateConfig(showNotification: Boolean = true) {
@@ -232,6 +236,13 @@ class PeerBridgeService(private val project: Project) : Disposable {
         } else if (server != null && activePort == config.self.port) {
             lastKnownSelfPeer = config.self
             return configResult
+        } else if (isAttached && attachedPort == config.self.port) {
+            if (PeerProbe.probePeerServer(config.self.port, config.self.peerId)) {
+                lastKnownSelfPeer = config.self
+                return configResult
+            }
+            log("[peer-server] follower lost peer ${config.self.peerId} on port ${config.self.port}; attempting takeover.")
+            stopServer()
         }
 
         stopServer()
@@ -260,6 +271,15 @@ class PeerBridgeService(private val project: Project) : Disposable {
         val desiredPort = config.self.port
 
         if (tryStartServer(config, desiredPort)) {
+            isAttached = false
+            attachedPort = null
+            return config
+        }
+
+        if (PeerProbe.probePeerServer(desiredPort, config.self.peerId)) {
+            isAttached = true
+            attachedPort = desiredPort
+            log("[peer-server] port $desiredPort already served by peer ${config.self.peerId}; attached as follower.")
             return config
         }
 
@@ -279,6 +299,8 @@ class PeerBridgeService(private val project: Project) : Disposable {
         }
 
         log("[peer-server] port $desiredPort was busy, switched to $fallbackPort.")
+        isAttached = false
+        attachedPort = null
 
         if (configPath != null) {
             try {
@@ -300,6 +322,8 @@ class PeerBridgeService(private val project: Project) : Disposable {
             created.start()
             server = created
             activePort = port
+            isAttached = false
+            attachedPort = null
             log("[peer-server] listening on 127.0.0.1:$port")
             true
         } catch (error: Exception) {

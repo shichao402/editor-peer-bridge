@@ -56,7 +56,7 @@ object BridgeConfigSupport {
         if (previous == null) {
             return false
         }
-        return snapshotSelfPeer(previous) != snapshotSelfPeer(current)
+        return snapshotSelfPeerForRestart(previous) != snapshotSelfPeerForRestart(current)
     }
 
     fun ensureConfig(
@@ -597,6 +597,15 @@ object BridgeConfigSupport {
             return value
         }
         return value.replaceFirstChar { it.uppercase() }
+    }
+
+    private fun snapshotSelfPeerForRestart(peer: PeerEntry): String {
+        return mapper.writeValueAsString(
+            mapOf(
+                "peerId" to peer.peerId,
+                "port" to peer.port,
+            ),
+        )
     }
 
     private fun snapshotSelfPeer(peer: PeerEntry): String {

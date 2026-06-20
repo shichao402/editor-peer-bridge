@@ -41,6 +41,10 @@ export class StatusBarController implements vscode.Disposable {
       item.backgroundColor = portReassigned
         ? new vscode.ThemeColor('statusBarItem.warningBackground')
         : undefined
+    } else if (state === 'attached' && activePort) {
+      item.text = `$(link) Bridge :${activePort}`
+      item.tooltip = `Editor Peer Bridge attached to 127.0.0.1:${activePort} (another window hosts this peer).\nClick to open config.`
+      item.backgroundColor = undefined
     } else {
       item.text = '$(circle-slash) Bridge stopped'
       item.tooltip = 'Editor Peer Bridge is not running.\nClick to open config.'

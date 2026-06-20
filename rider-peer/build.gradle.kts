@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "com.editorpeerbridge"
-version = "0.0.15"
+version = "0.0.16"
 
 java {
     sourceCompatibility = JavaVersion.VERSION_17

@@ -2,10 +2,12 @@ import * as path from 'path'
 import * as vscode from 'vscode'
 import {
   EnsureConfigResult,
+  bindPeerIdToWorkspace,
   ensureConfig,
   getBridgeConfigPath,
   loadBridgeConfig,
   selfPeerConfigChanged,
+  setConfigContext,
   updateSelfPort
 } from './config'
 import { PeerServer, PeerServerState } from './peerServer'
@@ -47,7 +49,11 @@ export class BridgeController implements vscode.Disposable {
   private disposed = false
   private lastKnownSelfPeer?: PeerEntry
 
-  constructor(private readonly output: vscode.OutputChannel) {
+  constructor(
+    private readonly output: vscode.OutputChannel,
+    workspaceState?: vscode.Memento
+  ) {
+    setConfigContext({ workspaceState })
     this.server = new PeerServer(output)
     this.disposables.push(this.reconcileEmitter)
   }
@@ -83,6 +89,9 @@ export class BridgeController implements vscode.Disposable {
 
   private async runReconcile(): Promise<ReconcileOutcome> {
     const configResult = await ensureConfig()
+    if (configResult.peerId) {
+      await bindPeerIdToWorkspace(configResult.peerId)
+    }
     this.output.appendLine(
       `[config] ${configResult.status}${configResult.configPath ? `: ${configResult.configPath}` : ''}`
     )
@@ -160,7 +169,7 @@ export class BridgeController implements vscode.Disposable {
 
     return {
       configResult,
-      activePort: this.server.listeningPort ?? configuredPort,
+      activePort: this.server.effectivePort ?? configuredPort,
       portReassigned,
       bridgeConfig,
       state: this.server.state
@@ -229,13 +238,14 @@ export class BridgeController implements vscode.Disposable {
   get status(): { state: PeerServerState; port?: number; error?: Error } {
     return {
       state: this.server.state,
-      port: this.server.listeningPort,
+      port: this.server.effectivePort,
       error: this.server.lastError
     }
   }
 
   async dispose(): Promise<void> {
     this.disposed = true
+    setConfigContext(undefined)
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer)
       this.debounceTimer = undefined

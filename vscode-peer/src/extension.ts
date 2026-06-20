@@ -16,7 +16,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   attachFileLogging(output, getLogFilePath(context))
   context.subscriptions.push(output)
 
-  controller = new BridgeController(output)
+  controller = new BridgeController(output, context.workspaceState)
   const statusBar = new StatusBarController()
   context.subscriptions.push({
     dispose: () => {

@@ -3,10 +3,11 @@ import * as fs from 'fs'
 import * as http from 'http'
 import * as vscode from 'vscode'
 import { canPeerHandleRequest, findAvailablePort, isFocusOnJumpEnabled, loadBridgeConfig } from './config'
+import { probePeerServer } from './peerProbe'
 import { BridgeConfig, BridgeErrorResponse, BridgeSuccessResponse, OpenLocationRequest } from './protocol'
 import { bringWindowToForeground } from './windowFocus'
 
-export type PeerServerState = 'stopped' | 'listening' | 'failed'
+export type PeerServerState = 'stopped' | 'listening' | 'attached' | 'failed'
 
 export interface EnsureListeningOptions {
   /**
@@ -20,6 +21,7 @@ export interface EnsureListeningOptions {
 export class PeerServer {
   private server?: http.Server
   private activePort?: number
+  private attachedPort?: number
   private _state: PeerServerState = 'stopped'
   private _lastError?: Error
 
@@ -37,6 +39,15 @@ export class PeerServer {
     return this._state === 'listening' ? this.activePort : undefined
   }
 
+  /** Port of a sibling window's server when running in follower mode. */
+  get sharedPort(): number | undefined {
+    return this._state === 'attached' ? this.attachedPort : undefined
+  }
+
+  get effectivePort(): number | undefined {
+    return this.listeningPort ?? this.sharedPort
+  }
+
   /**
    * Make the server listen on `config.self.port`. If that port is taken,
    * automatically pick the next available port in the configured range and
@@ -46,14 +57,31 @@ export class PeerServer {
   async ensureListening(config: BridgeConfig, options: EnsureListeningOptions = {}): Promise<void> {
     const desiredPort = config.self.port
 
-    if (this.server && this._state === 'listening' && this.activePort === desiredPort) {
+    if (this._state === 'listening' && this.activePort === desiredPort) {
       return
+    }
+    if (this._state === 'attached' && this.attachedPort === desiredPort) {
+      if (await probePeerServer(desiredPort, config.self.peerId)) {
+        return
+      }
+      this.output.appendLine(
+        `[peer-server] follower lost peer ${config.self.peerId} on port ${desiredPort}; attempting takeover.`
+      )
     }
 
     await this.stop()
-
-    // First attempt: the port the user (or previous run) asked for.
     if (await this.tryListen(desiredPort)) {
+      return
+    }
+
+    // Another window may already host this peer on the configured port.
+    if (await probePeerServer(desiredPort, config.self.peerId)) {
+      this._state = 'attached'
+      this.attachedPort = desiredPort
+      this._lastError = undefined
+      this.output.appendLine(
+        `[peer-server] port ${desiredPort} already served by peer ${config.self.peerId}; attached as follower.`
+      )
       return
     }
 
@@ -93,12 +121,15 @@ export class PeerServer {
   async stop(): Promise<void> {
     if (!this.server) {
       this._state = 'stopped'
+      this.activePort = undefined
+      this.attachedPort = undefined
       return
     }
 
     const server = this.server
     this.server = undefined
     this.activePort = undefined
+    this.attachedPort = undefined
 
     await new Promise<void>((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()))
