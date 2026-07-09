@@ -30,7 +30,18 @@ fun pathMatchesRoots(filePath: String, workspaceRoots: List<String>): Boolean {
 
 fun projectTypeMatches(sourceProjectType: String, supportedProjectTypes: List<String>, typeHierarchy: Map<String, List<String>>): Boolean {
     return supportedProjectTypes.any { supportedType ->
-        supportedType == sourceProjectType || containsProjectType(supportedType, sourceProjectType, typeHierarchy, mutableSetOf())
+        if (supportedType == sourceProjectType) {
+            return@any true
+        }
+
+        val visited = mutableSetOf<String>()
+        // supported type is a descendant of the source (e.g. all -> solution-a)
+        if (containsProjectType(sourceProjectType, supportedType, typeHierarchy, visited)) {
+            return@any true
+        }
+
+        // source is a descendant of the supported type (e.g. solution-a -> all)
+        containsProjectType(supportedType, sourceProjectType, typeHierarchy, mutableSetOf())
     }
 }
 

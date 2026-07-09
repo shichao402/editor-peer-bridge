@@ -39,6 +39,13 @@ export function projectTypeMatches(sourceProjectType: string, supportedTypes: st
       return true
     }
 
+    const visited = new Set<string>()
+    // supported type is a descendant of the source (e.g. all -> solution-a)
+    if (includesProjectType(sourceProjectType, supportedType, typeHierarchy, visited)) {
+      return true
+    }
+
+    // source is a descendant of the supported type (e.g. solution-a -> all)
     return includesProjectType(supportedType, sourceProjectType, typeHierarchy, new Set())
   })
 }
