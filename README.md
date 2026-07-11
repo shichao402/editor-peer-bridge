@@ -192,6 +192,8 @@ Output: `rider-peer/build/distributions/editor-peer-bridge-rider-x.x.x.zip`
 
 ## Publishing
 
+> **目标发布规范**（Tag → CI 构建 → GitHub Release → 可选市场上架）见 [`docs/GITHUB_RELEASE_WORKFLOW.md`](docs/GITHUB_RELEASE_WORKFLOW.md)。下文描述的是当前仓库中的实际操作方式；后续改造以该文档为准。
+
 A cross-platform Node.js tool publishes the plugins to VS Code Marketplace, Open VSX Registry, and JetBrains Marketplace.
 
 ### GitHub Actions packaging

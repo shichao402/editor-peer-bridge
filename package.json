@@ -10,6 +10,7 @@
     "release:openvsx": "node scripts/release.mjs openvsx",
     "release:rider": "node scripts/release.mjs rider",
     "release:dry": "node scripts/release.mjs --dry-run",
+    "ship": "python scripts/github_release.py",
     "version:read": "node scripts/version.mjs read",
     "version:sync": "node scripts/version.mjs sync",
     "version:check": "node scripts/version.mjs check",

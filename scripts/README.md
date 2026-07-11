@@ -34,7 +34,22 @@ The root `VERSION` file is the single release version source. Before tagging a r
 # edit VERSION, then sync package/build metadata
 npm run version:sync
 npm run version:check
+```
 
+### GitHub tag → CI → Release (orchestrator)
+
+Use `scripts/github_release.py` (SSOT: `VERSION`; version checks delegate to `version.mjs`). Does **not** replace marketplace publishing (`release.mjs`).
+
+```bash
+npm run ship                              # tag + push + wait CI (reads VERSION)
+python scripts/github_release.py status   # VERSION / tag / CI / Release state
+python scripts/github_release.py release  # GitHub Release from CI artifacts
+npm run release -- --from-tag v$(cat VERSION)   # marketplaces (unchanged)
+```
+
+### Manual tag (alternative)
+
+```bash
 git tag v$(cat VERSION)
 git push origin v$(cat VERSION)
 ```
