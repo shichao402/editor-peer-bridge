@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [0.0.17] - 2026-07-23
+## [0.0.18] - 2026-07-23
 
 ### Changed
 
@@ -16,6 +16,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 ### Docs
 
 - README, marketplace README, and `shared/protocol/README.md` aligned with manual config sync behavior.
+
+## [0.0.17] - 2026-07-23
+
+### Note
+
+- Version number reserved / already present on marketplaces; behavioral release shipped as **0.0.18**.
 
 ## [0.0.15] - 2026-06-18
 
