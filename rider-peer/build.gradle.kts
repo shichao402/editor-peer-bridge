@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "com.editorpeerbridge"
-version = "0.0.16"
+version = "0.0.17"
 
 java {
     sourceCompatibility = JavaVersion.VERSION_17
@@ -31,7 +31,8 @@ intellij {
 tasks {
     patchPluginXml {
         sinceBuild.set("241")
-        untilBuild.set("261.*")
+        // Open-ended: omit until-build so Marketplace/IDE accept future Rider builds.
+        untilBuild.set(provider { null })
     }
 
     buildSearchableOptions {

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.17 - 2026-07-23
+
+### Changed
+
+- Config sync is manual: use **Create Config** / **Update Config**. Activation no longer rewrites `.editor-peer-bridge.json`.
+- Removed automatic `.bak.*` config backups; Update Config cleans leftover backup files.
+- Busy-port fallback listens for this session only and does not persist a new port into the shared config.
+
 ## 0.0.5 - 2026-05-21
 
 ### Added

@@ -185,13 +185,31 @@ async function findConfigPath(startDirectory: string): Promise<string | undefine
   }
 }
 
-// ── Config parse / validate / backup ──
+// ── Config parse / validate / backup cleanup ──
 
-export async function backupConfigFile(configPath: string): Promise<string> {
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
-  const backupPath = `${configPath}.bak.${timestamp}`
-  await fs.copyFile(configPath, backupPath)
-  return backupPath
+export async function cleanupConfigBackups(configPath: string): Promise<string[]> {
+  const dir = path.dirname(configPath)
+  const prefix = `${path.basename(configPath)}.bak.`
+  let entries: string[]
+  try {
+    entries = await fs.readdir(dir)
+  } catch {
+    return []
+  }
+
+  const removed: string[] = []
+  for (const name of entries) {
+    if (!name.startsWith(prefix)) {
+      continue
+    }
+    try {
+      await fs.unlink(path.join(dir, name))
+      removed.push(name)
+    } catch {
+      // best-effort cleanup
+    }
+  }
+  return removed
 }
 
 function isEditorKind(value: unknown): value is EditorKind {
@@ -321,7 +339,7 @@ function parseBridgeConfigContent(content: string): ParseBridgeConfigResult {
   return { ok: true, parsed: { raw: salvaged.raw, warnings: salvaged.warnings } }
 }
 
-// ── Auto-config: ensure config exists and self is registered ──
+// ── Manual config sync: create/repair/update only when the user asks ──
 
 export async function ensureConfig(): Promise<EnsureConfigResult> {
   const workspaceRoot = getPrimaryWorkspaceRoot()
@@ -350,16 +368,6 @@ async function ensureSelfInConfig(
 ): Promise<EnsureConfigResult> {
   const changes: string[] = []
   const projectType = solutionName ?? 'all'
-  let backedUp = false
-
-  const backupBeforeRepair = async (reason: string): Promise<void> => {
-    if (backedUp) {
-      return
-    }
-    const backupPath = await backupConfigFile(configPath)
-    backedUp = true
-    changes.push(`Backed up config to ${backupPath} (${reason}).`)
-  }
 
   let content: string
   try {
@@ -371,18 +379,14 @@ async function ensureSelfInConfig(
 
   const parsed = parseBridgeConfigContent(content)
   let raw: RawBridgeConfig
-  let repairRequired = false
 
   if (!parsed.ok) {
-    repairRequired = true
-    await backupBeforeRepair('invalid config file')
     changes.push(`Config repair: ${parsed.error}`)
     return createInitialConfigAt(configPath, workspaceRoot, editorKind, explicitPeerId, solutionName, changes)
   }
 
   raw = parsed.parsed.raw
   if (parsed.parsed.warnings.length > 0) {
-    repairRequired = true
     for (const warning of parsed.parsed.warnings) {
       changes.push(warning)
     }
@@ -392,8 +396,6 @@ async function ensureSelfInConfig(
 
   let self = findSelfPeer(Object.values(raw.peers), editorKind, explicitPeerId, projectType, workspaceRoot)
   if (self && !validatePeerEntry(self)) {
-    repairRequired = true
-    await backupBeforeRepair('invalid self peer block')
     changes.push(`Removed invalid self peer ${self.peerId}; will recreate or repair.`)
     delete raw.peers[self.peerId]
     self = undefined
@@ -423,7 +425,7 @@ async function ensureSelfInConfig(
     raw.peers[peerId] = newPeer
     changes.push(`Added peer ${peerId}.`)
     ensureProjectType(raw, projectType, changes)
-    await fs.writeFile(configPath, JSON.stringify(raw, null, 2) + '\n', 'utf8')
+    changes.push(...await writeConfigFile(configPath, raw))
 
     return { status: 'updated', configPath, peerId, changes }
   }
@@ -446,10 +448,13 @@ async function ensureSelfInConfig(
   ensureProjectType(raw, projectType, changes)
 
   if (changes.length > 0) {
-    if (repairRequired && !backedUp) {
-      await backupBeforeRepair('config repair')
-    }
-    await fs.writeFile(configPath, JSON.stringify(raw, null, 2) + '\n', 'utf8')
+    changes.push(...await writeConfigFile(configPath, raw))
+    return { status: 'updated', configPath, peerId: self.peerId, changes }
+  }
+
+  const removedBackups = await cleanupConfigBackups(configPath)
+  if (removedBackups.length > 0) {
+    changes.push(`Removed ${removedBackups.length} config backup file(s).`)
     return { status: 'updated', configPath, peerId: self.peerId, changes }
   }
 
@@ -569,14 +574,22 @@ async function createInitialConfigAt(
     ui: { statusBar: true, focusOnJump: false }
   }
 
-  await fs.writeFile(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8')
+  const writeChanges = await writeConfigFile(configPath, config)
 
   return {
     status: 'created',
     configPath,
     peerId,
-    changes: [...priorChanges, `Created config with peer ${peerId}.`]
+    changes: [...priorChanges, `Created config with peer ${peerId}.`, ...writeChanges]
   }
+}
+
+async function writeConfigFile(configPath: string, config: RawBridgeConfig): Promise<string[]> {
+  await fs.writeFile(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8')
+  const removedBackups = await cleanupConfigBackups(configPath)
+  return removedBackups.length > 0
+    ? [`Removed ${removedBackups.length} config backup file(s).`]
+    : []
 }
 
 function generatePeerId(editorKind: EditorKind, existingPeers: PeerEntry[]): string {
@@ -638,25 +651,6 @@ export async function findAvailablePort(usedPorts: Set<number>): Promise<number>
     if (await isPortAvailable(port)) return port
   }
   throw new Error(`No available port found in range ${PORT_RANGE_START}-${PORT_RANGE_END}`)
-}
-
-export async function updateSelfPort(configPath: string, peerId: string, newPort: number): Promise<void> {
-  const content = await fs.readFile(configPath, 'utf8')
-  const parsed = parseBridgeConfigContent(content)
-  if (!parsed.ok) {
-    throw new Error(`Cannot update port: invalid config (${parsed.error})`)
-  }
-
-  const raw = parsed.parsed.raw
-  const peer = raw.peers[peerId]
-  if (!peer) {
-    throw new Error(`Peer "${peerId}" not found in ${configPath}`)
-  }
-  if (peer.port === newPort) {
-    return
-  }
-  peer.port = newPort
-  await fs.writeFile(configPath, JSON.stringify(raw, null, 2) + '\n', 'utf8')
 }
 
 function isPortAvailable(port: number): Promise<boolean> {

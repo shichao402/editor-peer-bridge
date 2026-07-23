@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.0.17] - 2026-07-23
+
+### Changed
+
+- Config writes are **manual only**: Create Config / Update Config. Startup, file watching, and Restart Server only reload the shared `.editor-peer-bridge.json` and no longer rewrite it.
+- Removed automatic config backups (`.editor-peer-bridge.json.bak.*`). Manual Update deletes any leftover historical backup files next to the config.
+- Port fallback on bind conflict is session-only and is no longer persisted back into the config file (avoids multi-IDE write conflicts).
+- Rider plugin compatibility is open-ended (`since-build` 241, no `until-build`), so newer Rider builds such as 2026.2 are accepted without bumping an upper bound each release.
+
+### Docs
+
+- README, marketplace README, and `shared/protocol/README.md` aligned with manual config sync behavior.
+
 ## [0.0.15] - 2026-06-18
 
 ### Added

@@ -4,14 +4,17 @@
     <vendor email="shichao402@gmail.com" url="https://github.com/shichao402/editor-peer-bridge">shichao402</vendor>
     <description><![CDATA[
         <p>Editor Peer Bridge is a local cross-editor navigation bridge for Rider, VS Code, Cursor, and CodeBuddy.</p>
-        <p>Use one action to send the current file and selection to a matching peer editor in the same workspace. The plugin supports multi-target routing, an "All" broadcast option, automatic project configuration, Rider solution detection, and multiple editor instances.</p>
+        <p>Use one action to send the current file and selection to a matching peer editor in the same workspace. The plugin supports multi-target routing, an "All" broadcast option, manual Create/Update Config, Rider solution detection, and multiple editor instances.</p>
         <p>Communication stays on localhost; file paths and selections are not uploaded to external services.</p>
     ]]></description>
 
     <change-notes><![CDATA[
-        <h3>0.0.11</h3>
+        <h3>0.0.17</h3>
         <ul>
-            <li>Added Rider actions to create, update, and open the Editor Peer Bridge config from Find Action.</li>
+            <li>Config writes are manual only (Create / Update Config). Startup and file watching no longer rewrite the shared config.</li>
+            <li>Removed automatic config backups; Update Config deletes leftover <code>.bak.*</code> files.</li>
+            <li>Port fallback on bind conflict is session-only and is not persisted to the config file.</li>
+            <li>Open-ended Rider compatibility (no until-build upper bound).</li>
         </ul>
     ]]></change-notes>
 

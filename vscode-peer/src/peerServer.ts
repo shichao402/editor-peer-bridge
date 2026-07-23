@@ -12,8 +12,8 @@ export type PeerServerState = 'stopped' | 'listening' | 'attached' | 'failed'
 export interface EnsureListeningOptions {
   /**
    * Called when EADDRINUSE forced the server onto a different port.
-   * The controller is expected to persist this back to the config file so
-   * other peers can pick up the change.
+   * Persistence to the shared config is intentionally left to a manual
+   * Update Config action — automatic writes caused multi-IDE conflicts.
    */
   onPortReassigned?: (newPort: number, previousPort: number) => Promise<void> | void
 }
@@ -51,8 +51,9 @@ export class PeerServer {
   /**
    * Make the server listen on `config.self.port`. If that port is taken,
    * automatically pick the next available port in the configured range and
-   * report it back through `options.onPortReassigned`. Idempotent: a no-op
-   * when already listening on the desired port.
+   * report it back through `options.onPortReassigned` (session-only; the
+   * shared config file is not rewritten). Idempotent: a no-op when already
+   * listening on the desired port.
    */
   async ensureListening(config: BridgeConfig, options: EnsureListeningOptions = {}): Promise<void> {
     const desiredPort = config.self.port

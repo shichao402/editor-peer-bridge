@@ -125,7 +125,25 @@ class PeerBridgeService(private val project: Project) : Disposable {
 
     fun createOrUpdateConfig(showNotification: Boolean = true) {
         try {
-            reconcile(showNotification = showNotification)
+            val basePath = project.basePath
+            val configResult = BridgeConfigSupport.ensureConfig(
+                workspaceRoot = basePath,
+                editorKind = EditorKind.rider,
+                explicitPeerId = System.getProperty("editor.peer.bridge.peerId"),
+                solutionName = detectSolutionName(),
+            )
+
+            log("[config] ${configResult.status}${configResult.configPath?.let { ": $it" } ?: ""}")
+            for (change in configResult.changes) {
+                log("[config] $change")
+            }
+
+            // Apply the freshly written config to the local server.
+            reconcile(showNotification = false)
+
+            if (showNotification) {
+                notify(formatConfigOutcomeMessage(configResult), NotificationType.INFORMATION)
+            }
         } catch (error: Exception) {
             notify("Config update failed: ${error.message ?: "Unexpected error."}", NotificationType.ERROR)
         }
@@ -137,14 +155,9 @@ class PeerBridgeService(private val project: Project) : Disposable {
                 notify("Project base path not found.", NotificationType.WARNING)
                 return
             }
-            var configFile = BridgeConfigSupport.findConfigFile(basePath)
+            val configFile = BridgeConfigSupport.findConfigFile(basePath)
             if (configFile == null) {
-                reconcile(showNotification = false)
-                configFile = BridgeConfigSupport.findConfigFile(basePath)
-            }
-
-            if (configFile == null) {
-                notify("Config not found: ${BridgeConfigSupport.CONFIG_FILE_NAME}", NotificationType.WARNING)
+                notify("Config not found: ${BridgeConfigSupport.CONFIG_FILE_NAME}. Use Create Config.", NotificationType.WARNING)
                 return
             }
 
@@ -195,24 +208,31 @@ class PeerBridgeService(private val project: Project) : Disposable {
 
     private fun runReconcile(): BridgeConfigSupport.EnsureConfigResult {
         val basePath = project.basePath
-        val configResult = BridgeConfigSupport.ensureConfig(
-            workspaceRoot = basePath,
-            editorKind = EditorKind.rider,
-            explicitPeerId = System.getProperty("editor.peer.bridge.peerId"),
-            solutionName = detectSolutionName(),
+        if (basePath == null) {
+            stopServer()
+            return BridgeConfigSupport.EnsureConfigResult(
+                status = BridgeConfigSupport.EnsureConfigStatus.SKIPPED,
+                changes = listOf("No workspace folder is open."),
+            )
+        }
+
+        val configFile = BridgeConfigSupport.findConfigFile(basePath)
+        if (configFile == null) {
+            stopServer()
+            return BridgeConfigSupport.EnsureConfigResult(
+                status = BridgeConfigSupport.EnsureConfigStatus.SKIPPED,
+                changes = listOf("Config not found: ${BridgeConfigSupport.CONFIG_FILE_NAME}. Use Create Config / Update Config."),
+            )
+        }
+
+        val configResult = BridgeConfigSupport.EnsureConfigResult(
+            status = BridgeConfigSupport.EnsureConfigStatus.UNCHANGED,
+            configPath = configFile.absolutePath,
+            changes = emptyList(),
         )
 
-        log("[config] ${configResult.status}${configResult.configPath?.let { ": $it" } ?: ""}")
-        for (change in configResult.changes) {
-            log("[config] $change")
-        }
-
-        if (configResult.status == BridgeConfigSupport.EnsureConfigStatus.SKIPPED) {
-            stopServer()
-            return configResult
-        }
-
-        ensureConfigWatcher(configResult.configPath)
+        log("[config] ${configResult.status}: ${configFile.absolutePath}")
+        ensureConfigWatcher(configFile.absolutePath)
 
         val config = try {
             loadConfigOrNull(forceReload = true)
@@ -221,8 +241,14 @@ class PeerBridgeService(private val project: Project) : Disposable {
             throw error
         } ?: run {
             stopServer()
-            return configResult
+            return BridgeConfigSupport.EnsureConfigResult(
+                status = BridgeConfigSupport.EnsureConfigStatus.SKIPPED,
+                configPath = configFile.absolutePath,
+                changes = listOf("Config could not be loaded. Use Update Config to repair."),
+            )
         }
+
+        val configWithPeer = configResult.copy(peerId = config.self.peerId)
 
         val shouldRestartForSelfChange = BridgeConfigSupport.selfPeerConfigChanged(lastKnownSelfPeer, config.self)
         if (shouldRestartForSelfChange) {
@@ -235,11 +261,11 @@ class PeerBridgeService(private val project: Project) : Disposable {
             }
         } else if (server != null && activePort == config.self.port) {
             lastKnownSelfPeer = config.self
-            return configResult
+            return configWithPeer
         } else if (isAttached && attachedPort == config.self.port) {
             if (PeerProbe.probePeerServer(config.self.port, config.self.peerId)) {
                 lastKnownSelfPeer = config.self
-                return configResult
+                return configWithPeer
             }
             log("[peer-server] follower lost peer ${config.self.peerId} on port ${config.self.port}; attempting takeover.")
             stopServer()
@@ -248,26 +274,22 @@ class PeerBridgeService(private val project: Project) : Disposable {
         stopServer()
 
         val resolvedConfig = try {
-            val configuredPort = config.self.port
-            var listeningConfig = ensureListening(config, configResult.configPath)
-            if (listeningConfig.self.port != configuredPort) {
-                loadConfigOrNull(forceReload = true)?.let { listeningConfig = it }
-            }
-            listeningConfig
+            ensureListening(config)
         } catch (error: Exception) {
             log("[controller] ensureListening failed: ${error.message ?: error.toString()}")
             throw error
         }
 
         lastKnownSelfPeer = resolvedConfig.self
-        return configResult
+        return configWithPeer
     }
 
     /**
      * Make the server listen on [BridgeConfig.self] port. If that port is taken,
-     * pick the next available port in the configured range, persist it, and listen there.
+     * pick the next available port in the configured range and listen there for this
+     * session only (does not rewrite the shared config file).
      */
-    private fun ensureListening(config: BridgeConfig, configPath: String?): BridgeConfig {
+    private fun ensureListening(config: BridgeConfig): BridgeConfig {
         val desiredPort = config.self.port
 
         if (tryStartServer(config, desiredPort)) {
@@ -298,19 +320,9 @@ class PeerBridgeService(private val project: Project) : Disposable {
             throw IllegalStateException(message)
         }
 
-        log("[peer-server] port $desiredPort was busy, switched to $fallbackPort.")
+        log("[peer-server] port $desiredPort was busy, switched to $fallbackPort for this session (config not modified).")
         isAttached = false
         attachedPort = null
-
-        if (configPath != null) {
-            try {
-                BridgeConfigSupport.updateSelfPort(File(configPath), config.self.peerId, fallbackPort)
-                log("[controller] persisted port $desiredPort → $fallbackPort for peer ${config.self.peerId}.")
-            } catch (writeError: Exception) {
-                log("[peer-server] failed to persist new port: ${writeError.message ?: writeError.toString()}")
-            }
-        }
-
         return listeningConfig
     }
 

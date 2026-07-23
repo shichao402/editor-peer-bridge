@@ -101,7 +101,7 @@ async function runConfigCommand(output: vscode.OutputChannel): Promise<void> {
   }
 
   try {
-    const outcome = await controller.reconcile()
+    const outcome = await controller.syncConfig()
     if (outcome.error) {
       throw outcome.error
     }
@@ -144,7 +144,7 @@ async function openConfigDocument(output: vscode.OutputChannel): Promise<void> {
   if (!configPath) {
     const action = await vscode.window.showWarningMessage('Editor Peer Bridge: config not found.', CREATE_CONFIG)
     if (action === CREATE_CONFIG && controller) {
-      const outcome = await controller.reconcile()
+      const outcome = await controller.syncConfig()
       if (outcome.configResult.configPath) {
         await openPath(outcome.configResult.configPath)
       }

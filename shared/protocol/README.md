@@ -8,10 +8,10 @@ All IDE implementations (`vscode-peer`, `rider-peer`) should behave consistently
 
 | Capability | Expected behavior |
 |------------|-------------------|
-| Config repair | Invalid JSON or an invalid self peer block is backed up to `.editor-peer-bridge.json.bak.{timestamp}`, valid peer entries are salvaged, and the current IDE's peer block is repaired or recreated. |
-| Config watch | Changes to `.editor-peer-bridge.json` trigger a reconcile pass (debounced ~150ms). |
+| Config repair | **Manual only** (Create / Update Config). Invalid JSON or an invalid self peer block is salvaged/repaired in place; historical `.editor-peer-bridge.json.bak.*` files are deleted on update. No automatic config writes on startup. |
+| Config watch | Changes to `.editor-peer-bridge.json` trigger a reconcile pass (debounced ~150ms) that reloads config and restarts the local server if needed — **read-only**, does not rewrite the file. |
 | Self peer restart | When the current IDE's peer entry changes (port, roots, project type, etc.), the local HTTP server stops and restarts. |
-| Port reassignment | If the configured port is already in use at startup, the peer scans `47631`–`47700` for a free port (skipping ports assigned to other peers), persists the new port to the current IDE's peer block, and listens there. |
+| Port reassignment | If the configured port is already in use at startup, the peer scans `47631`–`47700` for a free port (skipping ports assigned to other peers) and listens there **for this session only**. The shared config file is not rewritten. |
 | Restart Server | Manual command tears down the listener and runs a full reconcile. |
 | Open Log | Command opens a disk log file written by the plugin (location is IDE-specific). |
 | Jump errors | HTTP client connection failures surface a friendly message, e.g. connection refused with peer name and port. |

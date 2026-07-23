@@ -6,24 +6,66 @@
 
 | 市场 | 账号 | Token |
 |------|------|-------|
-| VSCode Marketplace | Microsoft 账号 + Publisher `shichao402` | Azure DevOps PAT (Marketplace > Manage) |
+| VS Code Marketplace | Microsoft 账号 + Publisher `shichao402` | Azure DevOps PAT (Marketplace > Manage)，可选 |
+| Open VSX Registry | Open VSX 账号 + 同名 namespace | https://open-vsx.org/user-settings/tokens ，可选 |
 | JetBrains Marketplace | JetBrains 账号 | https://plugins.jetbrains.com/author/me/tokens |
 
 ## 一、更新版本号
 
-同时改这两处，保持一致：
+根目录 [`VERSION`](../VERSION) 是唯一版本源。改完后同步派生元数据：
 
+```bash
+# 编辑 VERSION
+npm run version:sync
+npm run version:check
 ```
-vscode-peer/package.json        → "version": "x.x.x"
-rider-peer/build.gradle.kts     → version = "x.x.x"
+
+同时更新 [`CHANGELOG.md`](../CHANGELOG.md)（以及 marketplace 侧的 `vscode-peer/CHANGELOG.md` / Rider `plugin.xml` change-notes）。
+
+## 二、提交代码后打 Tag / GitHub Release
+
+工作树干净且已与 `origin` 同步后：
+
+```bash
+npm run ship -y
+# 等价于: python scripts/github_release.py ship -y
 ```
 
-## 二、构建
+这会：校验版本 → 打 `v$(cat VERSION)` → 推送 tag → 等待 `Package` workflow →（可选后续）创建 GitHub Release。
 
-### VSCode 扩展
+创建 GitHub Release（从 CI artifact）：
+
+```bash
+python scripts/github_release.py release -y
+```
+
+## 三、全渠道市场发布
+
+从 CI 打包产物发布（推荐），不要依赖本机构建：
+
+```bash
+npm run release -- --from-tag v$(cat VERSION)
+```
+
+会尝试：
+
+- VS Code Marketplace（需 `VSCE_PAT` / `release.config.json` 的 `vscode.pat`；缺 token 则跳过）
+- Open VSX（需 `OVSX_PAT` / `openvsx.pat`；缺 token 则跳过）
+- JetBrains Marketplace（需 `JETBRAINS_PUBLISH_TOKEN` / `rider.token`）
+
+本地 dry-run：
+
+```bash
+npm run release -- --from-tag v$(cat VERSION) --dry-run
+```
+
+## 四、本机构建（调试用）
+
+### VS Code 扩展
 
 ```bash
 cd vscode-peer
+npm install
 npm run compile
 npx @vscode/vsce package
 ```
@@ -32,86 +74,41 @@ npx @vscode/vsce package
 
 ### Rider 插件
 
-需要 JDK 17+ 和 Gradle 9+（`IntelliJ Platform Gradle Plugin 2.x` 要求）。如果使用项目内置工具：
+需要 JDK 17+。优先用项目 Gradle Wrapper：
 
 ```bash
 cd rider-peer
-
-JAVA_HOME="../.tools/jdk/jdk-21.0.10+7" \
-PATH="../.tools/jdk/jdk-21.0.10+7/bin:$PATH" \
-"../.tools/gradle/gradle-9.5.0/bin/gradle" \
---no-daemon buildPlugin
+./gradlew buildPlugin
 ```
 
 产物：`rider-peer/build/distributions/editor-peer-bridge-rider-x.x.x.zip`
 
-## 三、发布
-
-### VSCode Marketplace
-
-```bash
-cd vscode-peer
-
-# 首次登录（只需一次）
-npx @vscode/vsce login shichao402
-# 粘贴 Azure DevOps PAT
-
-# 发布
-npx @vscode/vsce publish
-```
-
-PAT 获取：
-1. https://dev.azure.com → User Settings → Personal access tokens
-2. Scopes: Marketplace > Manage
-
-### JetBrains Marketplace
-
-```bash
-cd rider-peer
-
-JAVA_HOME="../.tools/jdk/jdk-21.0.10+7" \
-PATH="../.tools/jdk/jdk-21.0.10+7/bin:$PATH" \
-JETBRAINS_PUBLISH_TOKEN="your_token_here" \
-"../.tools/gradle/gradle-9.5.0/bin/gradle" \
---no-daemon publishPlugin
-```
-
-Token 获取：https://plugins.jetbrains.com/author/me/tokens
-
-**注意**：第一次必须在 https://plugins.jetbrains.com/plugin/add 手动上传 ZIP。之后才能用命令行。
-
-## 四、提交 & 推送
-
-```bash
-git add -A
-git commit -m "Release vx.x.x"
-git push
-```
-
 ## 五、发布检查清单
 
-- [ ] 版本号已更新（package.json + build.gradle.kts）
-- [ ] CHANGELOG.md 已更新
-- [ ] VSCode 编译通过
-- [ ] Rider 构建通过
-- [ ] VSCode Marketplace 发布成功
-- [ ] JetBrains Marketplace 发布成功
-- [ ] Git commit + push
+- [ ] `VERSION` 已更新，且 `npm run version:sync` / `version:check` 通过
+- [ ] CHANGELOG / marketplace README / protocol README 已与行为对齐
+- [ ] 代码已提交并推送到主线
+- [ ] `npm run ship`（或手动 tag）已触发 `Package` workflow 且成功
+- [ ] GitHub Release 已创建（如需要）
+- [ ] `npm run release -- --from-tag v…` 已发布到已配置的市场渠道
+- [ ] Rider / VS Code / Cursor / CodeBuddy 侧能装上新版本
 
 ## 关键文件
 
 | 文件 | 用途 |
 |------|------|
-| `vscode-peer/package.json` | VSCode 扩展元数据、版本号 |
-| `rider-peer/build.gradle.kts` | Rider 插件构建配置、版本号 |
-| `rider-peer/src/main/resources/META-INF/plugin.xml` | Rider 插件描述、vendor 信息 |
+| `VERSION` | 发布版本单一真相源 |
+| `vscode-peer/package.json` | VS Code 扩展元数据、版本号 |
+| `rider-peer/build.gradle.kts` | Rider 插件构建配置、版本号、兼容范围 |
+| `rider-peer/src/main/resources/META-INF/plugin.xml` | Rider 插件描述、change-notes |
 | `vscode-peer/.vscodeignore` | VSIX 打包排除规则 |
 | `CHANGELOG.md` | 版本历史 |
-| `README.md` | 项目文档 |
+| `shared/protocol/README.md` | 跨 IDE 行为约定 |
+| `release.config.json` | 本机发布 token（gitignore） |
 | `LICENSE` | MIT 许可证 |
 
 ## 插件 ID
 
-- VSCode: `editor-peer-bridge-vscode-peer`（package.json name）
+- VS Code: `editor-peer-bridge-vscode-peer`（package.json name）
 - JetBrains: `com.editorpeerbridge.bridge`（plugin.xml id）
 - Publisher: `shichao402`

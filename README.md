@@ -6,7 +6,7 @@ Cross-editor code navigation tool. Jump between Rider, VSCode, Cursor, and CodeB
 
 - **Bidirectional jump** - Navigate from any editor to any other editor in the same project
 - **Multi-target selection** - Choose a specific target or broadcast to all peers
-- **Auto-config** - Configuration file is generated automatically on first launch
+- **Manual config** - Create or update `.editor-peer-bridge.json` only when you run Create / Update Config
 - **Solution auto-detection** - Rider detects the loaded `.sln` name and uses it as `projectType`
 - **Multi-instance support** - Run multiple Rider instances on the same directory with different solutions
 
@@ -14,7 +14,7 @@ Cross-editor code navigation tool. Jump between Rider, VSCode, Cursor, and CodeB
 
 | Editor | Version | Plugin |
 |--------|---------|--------|
-| JetBrains Rider | 2026.1+ | Rider plugin (ZIP) |
+| JetBrains Rider | 2024.1+ | Rider plugin (ZIP) |
 | Visual Studio Code | 1.95+ | VSCode extension (VSIX) |
 | Cursor | Latest | VSCode extension (VSIX) |
 | CodeBuddy | Latest | VSCode extension (VSIX) |
@@ -38,7 +38,7 @@ Cross-editor code navigation tool. Jump between Rider, VSCode, Cursor, and CodeB
 ## Quick Start
 
 1. Open the same project in two or more editors (e.g. Rider + Cursor)
-2. A `.editor-peer-bridge.json` config file is auto-generated in your project root
+2. In each editor, run **Editor Peer Bridge: Create Config** (or **Update Config**) to write `.editor-peer-bridge.json`
 3. Jump:
    - **Rider**: Press `Ctrl+Alt+Shift+J`
    - **VSCode/Cursor/CodeBuddy**: Run command `Editor Peer Bridge: Jump To Peer`
@@ -46,7 +46,7 @@ Cross-editor code navigation tool. Jump between Rider, VSCode, Cursor, and CodeB
 
 ## Configuration
 
-The plugin reads `.editor-peer-bridge.json` from the project root (or any parent directory). It is auto-generated on first launch, but you can edit it manually.
+The plugin reads `.editor-peer-bridge.json` from the project root (or any parent directory). Startup and file watching only **read** this file — they never rewrite it. Use **Create Config** / **Update Config** when you want the current IDE to create, repair, or refresh its peer entry. Manual Update also deletes leftover `.editor-peer-bridge.json.bak.*` backups.
 
 ### Example
 
@@ -133,9 +133,9 @@ For example, if you open `GameCore.sln` and `Tools.sln` in two separate Rider in
 }
 ```
 
-The solution name is sanitized to lowercase with hyphens (e.g. `My Game.sln` becomes `my-game`). The detected `projectType` is also automatically added to `typeHierarchy` under `"all"`.
+The solution name is sanitized to lowercase with hyphens (e.g. `My Game.sln` becomes `my-game`). When you run **Update Config**, the detected `projectType` is also added to `typeHierarchy` under `"all"`.
 
-If no solution is detected, the plugin falls back to `projectType: "all"` (the previous default behavior).
+If no solution is detected, Update Config falls back to `projectType: "all"` (the previous default behavior).
 
 ### Multi-Instance Support (Explicit)
 
@@ -156,7 +156,7 @@ All communication is local (127.0.0.1) - no data leaves your machine.
 
 ## Cross-IDE consistency
 
-Every supported editor implements the same bridge behaviors: automatic config repair with backup, watching `.editor-peer-bridge.json` for changes, restarting the local HTTP server when the current IDE's peer entry changes, **Restart Server** and **Open Log** commands, and friendly jump error messages when a peer is unreachable. See [`shared/protocol/README.md`](shared/protocol/README.md) for details.
+Every supported editor implements the same bridge behaviors: **manual** Create / Update Config (no automatic config writes or backups), watching `.editor-peer-bridge.json` for changes (reload-only), restarting the local HTTP server when the current IDE's peer entry changes, session-only port fallback when the configured port is busy, **Restart Server** and **Open Log** commands, and friendly jump error messages when a peer is unreachable. See [`shared/protocol/README.md`](shared/protocol/README.md) for details.
 
 ## Project Structure
 

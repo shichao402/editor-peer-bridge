@@ -7,8 +7,7 @@ import {
   getBridgeConfigPath,
   loadBridgeConfig,
   selfPeerConfigChanged,
-  setConfigContext,
-  updateSelfPort
+  setConfigContext
 } from './config'
 import { PeerServer, PeerServerState } from './peerServer'
 import { BridgeConfig, PeerEntry } from './protocol'
@@ -28,12 +27,14 @@ export interface ReconcileOutcome {
 }
 
 /**
- * Owns the lifecycle of the peer server: ensures the config exists, keeps
- * the server listening, and reacts to changes in `.editor-peer-bridge.json`.
+ * Owns the lifecycle of the peer server: loads the shared config, keeps the
+ * server listening, and reacts to changes in `.editor-peer-bridge.json`.
  *
- * All entry points (activation, commands, file watcher) funnel through
- * `reconcile()`, which is idempotent and serialised so concurrent triggers
- * cannot fight each other.
+ * Config file writes happen only via `syncConfig()` (Create / Update Config).
+ * Startup, file watching, and Restart Server are read-only against the config.
+ *
+ * All entry points funnel through `reconcile()` / `syncConfig()`, which are
+ * idempotent and serialised so concurrent triggers cannot fight each other.
  */
 export class BridgeController implements vscode.Disposable {
   private readonly server: PeerServer
@@ -59,7 +60,31 @@ export class BridgeController implements vscode.Disposable {
   }
 
   /**
-   * Run a reconcile pass: ensure config → load config → ensure server listening.
+   * Manually create/repair/update `.editor-peer-bridge.json`, then reconcile
+   * the local server against the result.
+   */
+  async syncConfig(): Promise<ReconcileOutcome> {
+    const configResult = await ensureConfig()
+    if (configResult.peerId) {
+      await bindPeerIdToWorkspace(configResult.peerId)
+    }
+    this.output.appendLine(
+      `[config] ${configResult.status}${configResult.configPath ? `: ${configResult.configPath}` : ''}`
+    )
+    for (const change of configResult.changes) {
+      this.output.appendLine(`[config] ${change}`)
+    }
+
+    const outcome = await this.reconcile()
+    return {
+      ...outcome,
+      configResult
+    }
+  }
+
+  /**
+   * Run a reconcile pass: load config → ensure server listening.
+   * Does not write the shared config file.
    * Concurrent calls coalesce into one tail-end run so we don't restart the
    * server multiple times for a burst of file events.
    */
@@ -88,25 +113,27 @@ export class BridgeController implements vscode.Disposable {
   }
 
   private async runReconcile(): Promise<ReconcileOutcome> {
-    const configResult = await ensureConfig()
-    if (configResult.peerId) {
-      await bindPeerIdToWorkspace(configResult.peerId)
-    }
-    this.output.appendLine(
-      `[config] ${configResult.status}${configResult.configPath ? `: ${configResult.configPath}` : ''}`
-    )
-    for (const change of configResult.changes) {
-      this.output.appendLine(`[config] ${change}`)
-    }
-
-    if (configResult.status === 'skipped') {
-      // No workspace / nothing we can do. Make sure we're not leaking a server.
+    const configPath = await getBridgeConfigPath()
+    if (!configPath) {
       await this.server.stop()
+      const configResult: EnsureConfigResult = {
+        status: 'skipped',
+        changes: ['Config not found: .editor-peer-bridge.json. Use Create Config / Update Config.']
+      }
+      this.output.appendLine(`[config] ${configResult.status}`)
+      for (const change of configResult.changes) {
+        this.output.appendLine(`[config] ${change}`)
+      }
       return { configResult, portReassigned: false, state: this.server.state }
     }
 
-    // (Re)bind watcher to the resolved config path so manual edits are picked up.
-    this.ensureWatcher(configResult.configPath)
+    const configResult: EnsureConfigResult = {
+      status: 'unchanged',
+      configPath,
+      changes: []
+    }
+    this.output.appendLine(`[config] ${configResult.status}: ${configPath}`)
+    this.ensureWatcher(configPath)
 
     let bridgeConfig: BridgeConfig
     try {
@@ -116,6 +143,9 @@ export class BridgeController implements vscode.Disposable {
       this.output.appendLine(`[controller] failed to load config: ${error.message}`)
       return { configResult, portReassigned: false, error, state: this.server.state }
     }
+
+    await bindPeerIdToWorkspace(bridgeConfig.self.peerId)
+    configResult.peerId = bridgeConfig.self.peerId
 
     const configuredPort = bridgeConfig.self.port
     let portReassigned = false
@@ -137,32 +167,19 @@ export class BridgeController implements vscode.Disposable {
       await this.server.ensureListening(bridgeConfig, {
         onPortReassigned: async (newPort, previousPort) => {
           portReassigned = true
-          if (configResult.configPath) {
-            await updateSelfPort(configResult.configPath, bridgeConfig.self.peerId, newPort)
-            bridgeConfig = {
-              ...bridgeConfig,
-              self: { ...bridgeConfig.self, port: newPort }
-            }
-            this.output.appendLine(
-              `[controller] persisted port ${previousPort} → ${newPort} for peer ${bridgeConfig.self.peerId}.`
-            )
+          bridgeConfig = {
+            ...bridgeConfig,
+            self: { ...bridgeConfig.self, port: newPort }
           }
+          this.output.appendLine(
+            `[controller] port ${previousPort} was busy, switched to ${newPort} for this session (config not modified).`
+          )
         }
       })
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err))
       this.output.appendLine(`[controller] ensureListening failed: ${error.message}`)
       return { configResult, portReassigned, error, bridgeConfig, state: this.server.state }
-    }
-
-    if (portReassigned) {
-      try {
-        bridgeConfig = await loadBridgeConfig()
-      } catch (err) {
-        const error = err instanceof Error ? err : new Error(String(err))
-        this.output.appendLine(`[controller] failed to reload config after port reassignment: ${error.message}`)
-        return { configResult, portReassigned, error, bridgeConfig, state: this.server.state }
-      }
     }
 
     this.lastKnownSelfPeer = { ...bridgeConfig.self }
@@ -219,8 +236,9 @@ export class BridgeController implements vscode.Disposable {
   }
 
   /**
-   * Stop the peer server and run a full reconcile pass (config sync + listen).
+   * Stop the peer server and run a full reconcile pass (reload + listen).
    * Unlike a plain reconcile, this always tears down an active listener first.
+   * Does not write the shared config file.
    */
   async restartServer(): Promise<ReconcileOutcome> {
     const previousPort = this.server.listeningPort

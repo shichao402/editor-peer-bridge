@@ -8,7 +8,7 @@ Jump from VS Code, Cursor, or CodeBuddy to the matching location in JetBrains Ri
 
 - **Cross-editor jump**: open the same file and selection in Rider, VS Code, Cursor, or CodeBuddy.
 - **Multi-target picker**: choose a specific peer or broadcast to all available peers.
-- **Automatic config**: creates `.editor-peer-bridge.json` on first launch.
+- **Manual config**: run **Create Config** / **Update Config** to write `.editor-peer-bridge.json` (startup never rewrites the file).
 - **Workspace-aware routing**: reads config from the project root or a parent directory.
 - **Multi-instance support**: supports explicit peer IDs for multiple editor windows.
 - **Rider solution detection**: Rider peers can route by loaded `.sln` / `.slnx` project type.
@@ -28,10 +28,11 @@ Jump from VS Code, Cursor, or CodeBuddy to the matching location in JetBrains Ri
 1. Install this extension in VS Code, Cursor, or CodeBuddy.
 2. Install the companion Rider plugin if you want to jump to or from Rider.
 3. Open the same project in two or more editors.
-4. Run `Editor Peer Bridge: Jump To Peer`.
-5. If multiple peers are available, select a target or choose `All`.
+4. Run `Editor Peer Bridge: Create Config` (or `Update Config`) in each editor so the shared config includes that peer.
+5. Run `Editor Peer Bridge: Jump To Peer`.
+6. If multiple peers are available, select a target or choose `All`.
 
-On first launch, the extension creates `.editor-peer-bridge.json` in your workspace. You can keep the generated defaults or edit the file to customize peer IDs, ports, project types, and routing timeouts.
+The extension does not rewrite `.editor-peer-bridge.json` on activate. Create / Update Config also removes leftover `.editor-peer-bridge.json.bak.*` backups. You can keep the generated defaults or edit the file to customize peer IDs, ports, project types, and routing timeouts.
 
 ## Configuration summary
 

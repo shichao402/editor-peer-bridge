@@ -5,7 +5,6 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import java.io.File
 import java.net.ServerSocket
-import java.time.Instant
 
 object BridgeConfigSupport {
     const val CONFIG_FILE_NAME = ".editor-peer-bridge.json"
@@ -45,11 +44,17 @@ object BridgeConfigSupport {
         return null
     }
 
-    fun backupConfigFile(configFile: File): String {
-        val timestamp = Instant.now().toString().replace(":", "-").replace(".", "-")
-        val backupFile = File("${configFile.absolutePath}.bak.$timestamp")
-        configFile.copyTo(backupFile, overwrite = false)
-        return backupFile.absolutePath
+    fun cleanupConfigBackups(configFile: File): List<String> {
+        val parent = configFile.parentFile ?: return emptyList()
+        val prefix = "${configFile.name}.bak."
+        val removed = mutableListOf<String>()
+        val backups = parent.listFiles { file -> file.isFile && file.name.startsWith(prefix) } ?: return emptyList()
+        for (backup in backups) {
+            if (backup.delete()) {
+                removed.add(backup.name)
+            }
+        }
+        return removed
     }
 
     fun selfPeerConfigChanged(previous: PeerEntry?, current: PeerEntry): Boolean {
@@ -109,23 +114,6 @@ object BridgeConfigSupport {
         return resolveBridgeConfig(raw, editorKind, solutionName)
     }
 
-    fun updateSelfPort(configFile: File, peerId: String, newPort: Int) {
-        val parsed = parseRawBridgeConfig(configFile.readText())
-        if (parsed is ParseBridgeConfigResult.Fail) {
-            throw IllegalStateException("Cannot update port: invalid config (${parsed.error})")
-        }
-
-        val raw = (parsed as ParseBridgeConfigResult.Ok).parsed.raw
-        val peers = raw.peers.toMutableMap()
-        val peer = peers[peerId] ?: throw IllegalStateException("Peer \"$peerId\" not found in ${configFile.path}")
-        if (peer.port == newPort) {
-            return
-        }
-
-        peers[peerId] = peer.copy(port = newPort)
-        writeConfig(configFile, raw.copy(peers = peers))
-    }
-
     fun findAvailablePort(usedPorts: Set<Int>): Int {
         for (port in PORT_RANGE_START..PORT_RANGE_END) {
             if (port in usedPorts) {
@@ -149,16 +137,6 @@ object BridgeConfigSupport {
     ): EnsureConfigResult {
         val changes = mutableListOf<String>()
         val projectType = solutionName ?: "all"
-        var backedUp = false
-
-        fun backupBeforeRepair(reason: String) {
-            if (backedUp) {
-                return
-            }
-            val backupPath = backupConfigFile(configFile)
-            backedUp = true
-            changes.add("Backed up config to $backupPath ($reason).")
-        }
 
         val content = try {
             configFile.readText()
@@ -172,14 +150,12 @@ object BridgeConfigSupport {
 
         val parsed = parseRawBridgeConfig(content)
         if (parsed is ParseBridgeConfigResult.Fail) {
-            backupBeforeRepair("invalid config file")
             changes.add("Config repair: ${parsed.error}")
             return createInitialConfigAt(configFile, workspaceRoot, editorKind, explicitPeerId, solutionName, changes)
         }
 
         val parsedConfig = (parsed as ParseBridgeConfigResult.Ok).parsed
         var raw = parsedConfig.raw
-        var repairRequired = parsedConfig.warnings.isNotEmpty()
         for (warning in parsedConfig.warnings) {
             changes.add(warning)
         }
@@ -191,8 +167,6 @@ object BridgeConfigSupport {
 
         var self = findSelfPeer(peers.values.toList(), editorKind, explicitPeerId, projectType)
         if (self != null && validatePeerEntry(self) == null) {
-            repairRequired = true
-            backupBeforeRepair("invalid self peer block")
             changes.add("Removed invalid self peer ${self.peerId}; will recreate or repair.")
             peers.remove(self.peerId)
             self = null
@@ -224,7 +198,7 @@ object BridgeConfigSupport {
             peers[peerId] = newPeer
             changes.add("Added peer $peerId.")
             raw = ensureProjectType(raw.copy(peers = peers), projectType, changes)
-            writeConfig(configFile, raw)
+            changes.addAll(writeConfig(configFile, raw))
             return EnsureConfigResult(
                 status = EnsureConfigStatus.UPDATED,
                 configPath = configFile.absolutePath,
@@ -261,10 +235,19 @@ object BridgeConfigSupport {
         raw = ensureProjectType(raw.copy(peers = peers), projectType, changes)
 
         if (changes.isNotEmpty()) {
-            if (repairRequired && !backedUp) {
-                backupBeforeRepair("config repair")
-            }
-            writeConfig(configFile, raw)
+            changes.addAll(writeConfig(configFile, raw))
+            return EnsureConfigResult(
+                status = EnsureConfigStatus.UPDATED,
+                configPath = configFile.absolutePath,
+                peerId = updatedSelf.peerId,
+                changes = changes,
+            )
+        }
+
+        // Still scrub leftover backups even when the config itself is current.
+        val removedBackups = cleanupConfigBackups(configFile)
+        if (removedBackups.isNotEmpty()) {
+            changes.add("Removed ${removedBackups.size} config backup file(s).")
             return EnsureConfigResult(
                 status = EnsureConfigStatus.UPDATED,
                 configPath = configFile.absolutePath,
@@ -331,12 +314,12 @@ object BridgeConfigSupport {
             ui = UiConfig(statusBar = true, focusOnJump = false),
         )
 
-        writeConfig(configFile, config)
+        val writeChanges = writeConfig(configFile, config)
         return EnsureConfigResult(
             status = EnsureConfigStatus.CREATED,
             configPath = configFile.absolutePath,
             peerId = peerId,
-            changes = priorChanges + "Created config with peer $peerId.",
+            changes = priorChanges + "Created config with peer $peerId." + writeChanges,
         )
     }
 
@@ -622,7 +605,13 @@ object BridgeConfigSupport {
         )
     }
 
-    private fun writeConfig(configFile: File, config: RawBridgeConfig) {
+    private fun writeConfig(configFile: File, config: RawBridgeConfig): List<String> {
         configFile.writeText(mapper.writerWithDefaultPrettyPrinter().writeValueAsString(config) + "\n")
+        val removedBackups = cleanupConfigBackups(configFile)
+        return if (removedBackups.isEmpty()) {
+            emptyList()
+        } else {
+            listOf("Removed ${removedBackups.size} config backup file(s).")
+        }
     }
 }
