@@ -3,6 +3,8 @@ import * as fs from 'fs'
 import * as http from 'http'
 import * as vscode from 'vscode'
 import { canPeerHandleRequest, findAvailablePort, isFocusOnJumpEnabled, loadBridgeConfig } from './config'
+import { isDocumentSyncRejection } from './documentSyncError'
+import { normalizePath } from './pathUtils'
 import { probePeerServer } from './peerProbe'
 import { BridgeConfig, BridgeErrorResponse, BridgeSuccessResponse, OpenLocationRequest } from './protocol'
 import { bringWindowToForeground } from './windowFocus'
@@ -415,16 +417,14 @@ async function openInVsCode(request: OpenLocationRequest): Promise<void> {
   try {
     document = await vscode.workspace.openTextDocument(uri)
   } catch (err) {
-    // Workaround for Cursor bug: file model may be internally marked as skipLSPSync
-    // (e.g. by AI indexing), causing a misleading "Files above 50MB cannot be
-    // synchronized with extensions" error even for small files.
-    // Fallback: open via the editor command which bypasses extension host document sync.
-    if (err instanceof Error && err.message.includes('50MB')) {
+    // Size was already validated above, so a sync rejection here means the model
+    // is not shareable with the extension host. Open via the editor command,
+    // which bypasses extension host document sync.
+    if (isDocumentSyncRejection(err)) {
       await vscode.commands.executeCommand('vscode.open', uri, {
         preview: false,
         preserveFocus: !request.options.activateWindow
       })
-      // After vscode.open, grab the active editor to apply selection
       await applySelectionToActiveEditor(request)
       return
     }
@@ -454,11 +454,18 @@ function applySelection(editor: vscode.TextEditor, request: OpenLocationRequest)
   editor.revealRange(selection, revealType)
 }
 
+const ACTIVE_EDITOR_POLL_ATTEMPTS = 20
+const ACTIVE_EDITOR_POLL_INTERVAL_MS = 100
+
 async function applySelectionToActiveEditor(request: OpenLocationRequest): Promise<void> {
-  // Small delay to let the editor open and become active
-  await new Promise(resolve => setTimeout(resolve, 100))
-  const editor = vscode.window.activeTextEditor
-  if (editor && editor.document.uri.fsPath === request.document.filePath) {
-    applySelection(editor, request)
+  const target = normalizePath(request.document.filePath)
+
+  for (let attempt = 0; attempt < ACTIVE_EDITOR_POLL_ATTEMPTS; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, ACTIVE_EDITOR_POLL_INTERVAL_MS))
+    const editor = vscode.window.activeTextEditor
+    if (editor && normalizePath(editor.document.uri.fsPath) === target) {
+      applySelection(editor, request)
+      return
+    }
   }
 }

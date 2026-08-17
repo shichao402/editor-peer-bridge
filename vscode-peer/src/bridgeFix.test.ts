@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { createServer, type Server } from 'node:http'
 import test from 'node:test'
+import { isDocumentSyncRejection } from './documentSyncError'
 import { probePeerServer } from './peerProbe'
 import { selfPeerConfigChanged } from './selfPeerSync'
 import type { PeerEntry } from './protocol'
@@ -69,4 +70,22 @@ test('selfPeerConfigChanged detects port changes', () => {
 
   const portChanged: PeerEntry = { ...base, port: 47633 }
   assert.equal(selfPeerConfigChanged(base, portChanged), true)
+})
+
+test('isDocumentSyncRejection matches VS Code and Cursor size-limit wording', () => {
+  assert.equal(
+    isDocumentSyncRejection(new Error('Files above 50MB cannot be synchronized with extensions.')),
+    true
+  )
+  assert.equal(
+    isDocumentSyncRejection(new Error(
+      'cannot open file:///d%3A/project/Foo.h. Detail: Documents above the size limit cannot be synchronized with extensions.'
+    )),
+    true
+  )
+})
+
+test('isDocumentSyncRejection ignores unrelated open failures', () => {
+  assert.equal(isDocumentSyncRejection(new Error('cannot open file. Detail: EACCES: permission denied')), false)
+  assert.equal(isDocumentSyncRejection(undefined), false)
 })

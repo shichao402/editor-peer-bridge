@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.19 - 2026-08-17
+
+### Fixed
+
+- Jumps into Cursor no longer fail with `Documents above the size limit cannot be synchronized with extensions`; the fallback open path now recognizes Cursor's new wording for this rejection.
+- The fallback open path waits for the target editor to become active before restoring the selection.
+
 ## 0.0.18 - 2026-07-23
 
 ### Changed

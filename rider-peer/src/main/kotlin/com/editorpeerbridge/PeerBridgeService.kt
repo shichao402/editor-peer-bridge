@@ -361,9 +361,28 @@ class PeerBridgeService(private val project: Project) : Disposable {
         return error is IOException && error.message?.contains("Address already in use", ignoreCase = true) == true
     }
 
-    private fun bindServerContexts(created: HttpServer, config: BridgeConfig) {
+    /**
+     * Config used to answer an incoming request. The file on disk wins so manual
+     * edits (extra workspace roots, project types) take effect without restarting
+     * the server, while the port we actually listen on wins over the configured
+     * one after a session port fallback.
+     */
+    private fun requestConfig(startupConfig: BridgeConfig): BridgeConfig {
+        val current = try {
+            loadConfigOrNull()
+        } catch (error: Exception) {
+            log("[peer-server] config reload failed, using startup snapshot: ${error.message ?: error.toString()}")
+            null
+        } ?: return startupConfig
+
+        val port = activePort ?: attachedPort ?: current.self.port
+        return if (current.self.port == port) current else current.copy(self = current.self.copy(port = port))
+    }
+
+    private fun bindServerContexts(created: HttpServer, startupConfig: BridgeConfig) {
         created.createContext("/peer/v1/info") { exchange ->
             handleExchange(exchange) { _, requestId ->
+                val config = requestConfig(startupConfig)
                 success(
                     requestId,
                     mapOf(
@@ -392,18 +411,21 @@ class PeerBridgeService(private val project: Project) : Disposable {
         }
         created.createContext("/peer/v1/can-handle") { exchange ->
             handleExchange(exchange) { body, requestId ->
+                val config = requestConfig(startupConfig)
                 val request = mapper.readValue(body, OpenLocationRequest::class.java)
+                val canHandle = canCurrentPeerHandle(config, request)
                 success(
                     requestId,
                     mapOf(
-                        "canHandle" to canCurrentPeerHandle(config, request),
-                        "reason" to if (canCurrentPeerHandle(config, request)) "MATCHED" else "NOT_MATCHED",
+                        "canHandle" to canHandle,
+                        "reason" to if (canHandle) "MATCHED" else "NOT_MATCHED",
                     ),
                 )
             }
         }
         created.createContext("/peer/v1/open-location") { exchange ->
             handleExchange(exchange) { body, requestId ->
+                val config = requestConfig(startupConfig)
                 val request = mapper.readValue(body, OpenLocationRequest::class.java)
                 validateRequest(request)?.let { validationMessage ->
                     return@handleExchange error(requestId, "INVALID_REQUEST", validationMessage) to 400
@@ -759,6 +781,8 @@ class PeerBridgeService(private val project: Project) : Disposable {
             .ifEmpty { null }
     }
 
+    // HTTP handler threads and the reconcile path both read through this cache.
+    @Synchronized
     private fun loadConfigOrNull(forceReload: Boolean = false): BridgeConfig? {
         val now = System.currentTimeMillis()
         if (!forceReload && cachedConfig != null && (now - configCacheTime) < CONFIG_CACHE_TTL_MS) {

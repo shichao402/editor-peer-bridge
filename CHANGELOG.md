@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.0.19] - 2026-08-17
+
+### Fixed
+
+- VS Code/Cursor/CodeBuddy: incoming jumps no longer fail with `Documents above the size limit cannot be synchronized with extensions`. Cursor reworded this rejection, so the existing fallback (which only matched the older `50MB` wording) stopped kicking in; detection now covers both wordings and the file is opened through the editor command instead.
+- VS Code/Cursor/CodeBuddy: when that fallback path is used, the selection is applied once the target editor actually becomes active (previously a single 100 ms delay could miss it), with case-insensitive path comparison on Windows.
+- Rider: incoming requests now match against the config on disk instead of the snapshot captured when the HTTP server started. Editing `.editor-peer-bridge.json` (e.g. adding a workspace root) previously had no effect on `/peer/v1/info`, `/peer/v1/can-handle`, or `/peer/v1/open-location` until the server was restarted, so peers kept getting `PROJECT_ROOT_OR_TYPE_MISMATCH`.
+
 ## [0.0.18] - 2026-07-23
 
 ### Changed

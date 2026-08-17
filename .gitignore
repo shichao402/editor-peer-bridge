@@ -10,6 +10,8 @@ vscode-peer/*.vsix
 rider-peer/build/
 rider-peer/.gradle/
 rider-peer/.idea/
+rider-peer/.intellijPlatform/
+rider-peer/.kotlin/
 
 # Release tooling
 release.config.json
