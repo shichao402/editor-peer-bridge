@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { createServer, type Server } from 'node:http'
 import test from 'node:test'
 import { isDocumentSyncRejection } from './documentSyncError'
+import { resolvePeerPort } from './peerDiscovery'
 import { probePeerServer } from './peerProbe'
 import { selfPeerConfigChanged } from './selfPeerSync'
 import type { PeerEntry } from './protocol'
@@ -88,4 +89,44 @@ test('isDocumentSyncRejection matches VS Code and Cursor size-limit wording', ()
 test('isDocumentSyncRejection ignores unrelated open failures', () => {
   assert.equal(isDocumentSyncRejection(new Error('cannot open file. Detail: EACCES: permission denied')), false)
   assert.equal(isDocumentSyncRejection(undefined), false)
+})
+
+const discoveryPeer: PeerEntry = {
+  peerId: 'rider-99',
+  editorKind: 'rider',
+  instanceName: 'Rider (test)',
+  port: 47691,
+  workspaceRoots: ['C:/project'],
+  supportedProjectTypes: ['all'],
+  projectType: 'all'
+}
+
+test('resolvePeerPort finds a peer that fell back to another port', async () => {
+  const searchPorts = [47691, 47692, 47693]
+  // Someone else took the configured port; the peer itself is one port over.
+  const intruder = await startMockBridge(47691, 'cursor-77')
+  const peer = await startMockBridge(47692, 'rider-99')
+  try {
+    assert.equal(await resolvePeerPort(discoveryPeer, searchPorts), 47692)
+  } finally {
+    await Promise.all([intruder, peer].map((server) =>
+      new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())))
+    ))
+  }
+})
+
+test('resolvePeerPort prefers the configured port', async () => {
+  const configured: PeerEntry = { ...discoveryPeer, port: 47694 }
+  const searchPorts = [47694, 47695]
+  const peer = await startMockBridge(47694, 'rider-99')
+  try {
+    assert.equal(await resolvePeerPort(configured, searchPorts), 47694)
+  } finally {
+    await new Promise<void>((resolve, reject) => peer.close((error) => (error ? reject(error) : resolve())))
+  }
+})
+
+test('resolvePeerPort returns undefined when the peer is nowhere in range', async () => {
+  const configured: PeerEntry = { ...discoveryPeer, port: 47696 }
+  assert.equal(await resolvePeerPort(configured, [47696, 47697]), undefined)
 })

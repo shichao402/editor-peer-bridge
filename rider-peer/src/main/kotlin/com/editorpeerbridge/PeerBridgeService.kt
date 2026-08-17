@@ -531,13 +531,21 @@ class PeerBridgeService(private val project: Project) : Disposable {
     }
 
     private fun sendToPeer(target: PeerEntry, request: OpenLocationRequest, config: BridgeConfig, activateWindow: Boolean) {
+        val liveTarget = resolveLiveTarget(target) ?: run {
+            val message = "${target.instanceName} (${target.peerId}) did not answer on port ${target.port} and was not " +
+                "found in ${BridgeConfigSupport.PORT_RANGE_START}-${BridgeConfigSupport.PORT_RANGE_END}. Is that IDE running?"
+            log("[peer-client] $message")
+            notify(message, NotificationType.ERROR)
+            return
+        }
+
         val actualRequest = if (!activateWindow) {
             request.copy(options = request.options.copy(activateWindow = false))
         } else {
             request
         }
         val timeoutMs = config.routing?.requestTimeoutMs ?: 3000
-        val response = postOpenLocation(target, actualRequest, timeoutMs)
+        val response = postOpenLocation(liveTarget, actualRequest, timeoutMs)
         if (response.ok) {
             notify("Jumped to ${target.instanceName}", NotificationType.INFORMATION)
         } else {
@@ -558,9 +566,20 @@ class PeerBridgeService(private val project: Project) : Disposable {
     }
 
     private fun sendToPeerQuietly(target: PeerEntry, request: OpenLocationRequest, config: BridgeConfig): Boolean {
+        val liveTarget = resolveLiveTarget(target) ?: return false
         val quietRequest = request.copy(options = request.options.copy(activateWindow = false))
         val timeoutMs = config.routing?.requestTimeoutMs ?: 3000
-        return postOpenLocation(target, quietRequest, timeoutMs).ok
+        return postOpenLocation(liveTarget, quietRequest, timeoutMs).ok
+    }
+
+    private fun resolveLiveTarget(target: PeerEntry): PeerEntry? {
+        val livePort = PeerProbe.resolvePeerPort(target) ?: return null
+        if (livePort == target.port) {
+            return target
+        }
+
+        log("[peer-client] ${target.peerId} answers on port $livePort, not the configured ${target.port}; using $livePort.")
+        return target.copy(port = livePort)
     }
 
     private fun buildOpenLocationRequest(config: BridgeConfig, editor: Editor, file: VirtualFile): OpenLocationRequest {

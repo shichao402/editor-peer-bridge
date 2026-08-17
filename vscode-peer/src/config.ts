@@ -2,14 +2,13 @@ import * as fs from 'fs/promises'
 import * as net from 'net'
 import * as path from 'path'
 import * as vscode from 'vscode'
+import { PORT_RANGE_END, PORT_RANGE_START } from './peerDiscovery'
 import { BridgeConfig, EditorKind, OpenLocationRequest, PeerConfig, PeerEntry, RawBridgeConfig } from './protocol'
 import { normalizePath, normalizeStoredPath, pathMatchesRoots, projectTypeMatches } from './pathUtils'
 
 export { selfPeerConfigChanged } from './selfPeerSync'
 
 const CONFIG_FILE_NAME = '.editor-peer-bridge.json'
-const PORT_RANGE_START = 47631
-const PORT_RANGE_END = 47700
 const SETTINGS_SECTION = 'editorPeerBridge'
 const FOCUS_ON_JUMP_SETTING = 'focusOnJump'
 const WORKSPACE_PEER_ID_KEY = 'editorPeerBridge.assignedPeerId'

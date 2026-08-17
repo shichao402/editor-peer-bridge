@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto'
 import * as vscode from 'vscode'
 import { loadBridgeConfig, resolveTargetPeers } from './config'
+import { PORT_RANGE_END, PORT_RANGE_START, resolvePeerPort } from './peerDiscovery'
 import { BridgeConfig, BridgeResponse, OpenLocationRequest, PeerConfig } from './protocol'
 
 export async function jumpToPeer(output: vscode.OutputChannel): Promise<void> {
@@ -90,9 +91,22 @@ async function sendToPeer(
   output: vscode.OutputChannel,
   activateWindow: boolean
 ): Promise<boolean> {
+  const livePort = await resolvePeerPort(target)
+  if (livePort === undefined) {
+    const message = `${target.instanceName} (${target.peerId}) did not answer on port ${target.port} and was not found in ${PORT_RANGE_START}-${PORT_RANGE_END}. Is that IDE running?`
+    output.appendLine(`[peer-client] ${message}`)
+    void vscode.window.showErrorMessage(`Editor Peer Bridge: ${message}`)
+    return false
+  }
+
+  if (livePort !== target.port) {
+    output.appendLine(`[peer-client] ${target.peerId} answers on port ${livePort}, not the configured ${target.port}; using ${livePort}.`)
+  }
+
+  const liveTarget: PeerConfig = { ...target, port: livePort }
   const actualRequest = activateWindow ? request : { ...request, options: { ...request.options, activateWindow: false } }
   const timeoutMs = config.routing?.requestTimeoutMs ?? 3000
-  const response = await postJson<{ targetPeerId: string }>(target, '/peer/v1/open-location', actualRequest, timeoutMs)
+  const response = await postJson<{ targetPeerId: string }>(liveTarget, '/peer/v1/open-location', actualRequest, timeoutMs)
 
   if (!response.ok) {
     output.appendLine(`[peer-client] open-location to ${target.instanceName} failed: ${response.error.code} ${response.error.message}`)

@@ -2,6 +2,10 @@
 
 ## 0.0.19 - 2026-08-17
 
+### Changed
+
+- Jumps now confirm the target peer's identity before sending and find it automatically when it had to fall back to another port, instead of reaching whichever IDE happens to hold the configured port.
+
 ### Fixed
 
 - Jumps into Cursor no longer fail with `Documents above the size limit cannot be synchronized with extensions`; the fallback open path now recognizes Cursor's new wording for this rejection.

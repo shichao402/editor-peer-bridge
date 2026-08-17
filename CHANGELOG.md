@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [0.0.19] - 2026-08-17
 
+### Changed
+
+- Both peers: before sending a jump, the client verifies that the configured port really answers as the target `peerId`, and searches the port range for it when it does not. Session-only port fallback (0.0.18) left configs pointing at stale ports, so jumps silently reached an unrelated project's IDE, which replied `PROJECT_ROOT_OR_TYPE_MISMATCH` under the intended peer's name. Unreachable peers now report the port that was tried and the range that was searched.
+
 ### Fixed
 
 - VS Code/Cursor/CodeBuddy: incoming jumps no longer fail with `Documents above the size limit cannot be synchronized with extensions`. Cursor reworded this rejection, so the existing fallback (which only matched the older `50MB` wording) stopped kicking in; detection now covers both wordings and the file is opened through the editor command instead.
