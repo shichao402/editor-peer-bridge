@@ -9,6 +9,11 @@
     ]]></description>
 
     <change-notes><![CDATA[
+        <h3>0.0.19</h3>
+        <ul>
+            <li>Before jumping, the client verifies the target peer on the configured port and searches the port range when session-only fallback left a stale port.</li>
+            <li>Incoming HTTP handlers now match against the on-disk config, so workspace-root edits take effect without restarting the server.</li>
+        </ul>
         <h3>0.0.18</h3>
         <ul>
             <li>Config writes are manual only (Create / Update Config). Startup and file watching no longer rewrite the shared config.</li>
